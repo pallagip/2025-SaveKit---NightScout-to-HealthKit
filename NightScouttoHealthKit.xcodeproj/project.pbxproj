@@ -1,0 +1,563 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		AD9FF50A2DCE978700E50BD9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AD9FF4F22DCE978500E50BD9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AD9FF4F92DCE978500E50BD9;
+			remoteInfo = NightScouttoHealthKit;
+		};
+		AD9FF5142DCE978700E50BD9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AD9FF4F22DCE978500E50BD9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AD9FF4F92DCE978500E50BD9;
+			remoteInfo = NightScouttoHealthKit;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		AD9FF4FA2DCE978500E50BD9 /* NightScouttoHealthKit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NightScouttoHealthKit.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD9FF5092DCE978700E50BD9 /* NightScouttoHealthKitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NightScouttoHealthKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD9FF5132DCE978700E50BD9 /* NightScouttoHealthKitUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NightScouttoHealthKitUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		AD9FF4FC2DCE978500E50BD9 /* NightScouttoHealthKit */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = NightScouttoHealthKit;
+			sourceTree = "<group>";
+		};
+		AD9FF50C2DCE978700E50BD9 /* NightScouttoHealthKitTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = NightScouttoHealthKitTests;
+			sourceTree = "<group>";
+		};
+		AD9FF5162DCE978700E50BD9 /* NightScouttoHealthKitUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = NightScouttoHealthKitUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AD9FF4F72DCE978500E50BD9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD9FF5062DCE978700E50BD9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD9FF5102DCE978700E50BD9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AD9FF4F12DCE978500E50BD9 = {
+			isa = PBXGroup;
+			children = (
+				AD9FF4FC2DCE978500E50BD9 /* NightScouttoHealthKit */,
+				AD9FF50C2DCE978700E50BD9 /* NightScouttoHealthKitTests */,
+				AD9FF5162DCE978700E50BD9 /* NightScouttoHealthKitUITests */,
+				AD9FF4FB2DCE978500E50BD9 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AD9FF4FB2DCE978500E50BD9 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AD9FF4FA2DCE978500E50BD9 /* NightScouttoHealthKit.app */,
+				AD9FF5092DCE978700E50BD9 /* NightScouttoHealthKitTests.xctest */,
+				AD9FF5132DCE978700E50BD9 /* NightScouttoHealthKitUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AD9FF4F92DCE978500E50BD9 /* NightScouttoHealthKit */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AD9FF51D2DCE978700E50BD9 /* Build configuration list for PBXNativeTarget "NightScouttoHealthKit" */;
+			buildPhases = (
+				AD9FF4F62DCE978500E50BD9 /* Sources */,
+				AD9FF4F72DCE978500E50BD9 /* Frameworks */,
+				AD9FF4F82DCE978500E50BD9 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				AD9FF4FC2DCE978500E50BD9 /* NightScouttoHealthKit */,
+			);
+			name = NightScouttoHealthKit;
+			packageProductDependencies = (
+			);
+			productName = NightScouttoHealthKit;
+			productReference = AD9FF4FA2DCE978500E50BD9 /* NightScouttoHealthKit.app */;
+			productType = "com.apple.product-type.application";
+		};
+		AD9FF5082DCE978700E50BD9 /* NightScouttoHealthKitTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AD9FF5202DCE978700E50BD9 /* Build configuration list for PBXNativeTarget "NightScouttoHealthKitTests" */;
+			buildPhases = (
+				AD9FF5052DCE978700E50BD9 /* Sources */,
+				AD9FF5062DCE978700E50BD9 /* Frameworks */,
+				AD9FF5072DCE978700E50BD9 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AD9FF50B2DCE978700E50BD9 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AD9FF50C2DCE978700E50BD9 /* NightScouttoHealthKitTests */,
+			);
+			name = NightScouttoHealthKitTests;
+			packageProductDependencies = (
+			);
+			productName = NightScouttoHealthKitTests;
+			productReference = AD9FF5092DCE978700E50BD9 /* NightScouttoHealthKitTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		AD9FF5122DCE978700E50BD9 /* NightScouttoHealthKitUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AD9FF5232DCE978700E50BD9 /* Build configuration list for PBXNativeTarget "NightScouttoHealthKitUITests" */;
+			buildPhases = (
+				AD9FF50F2DCE978700E50BD9 /* Sources */,
+				AD9FF5102DCE978700E50BD9 /* Frameworks */,
+				AD9FF5112DCE978700E50BD9 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AD9FF5152DCE978700E50BD9 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AD9FF5162DCE978700E50BD9 /* NightScouttoHealthKitUITests */,
+			);
+			name = NightScouttoHealthKitUITests;
+			packageProductDependencies = (
+			);
+			productName = NightScouttoHealthKitUITests;
+			productReference = AD9FF5132DCE978700E50BD9 /* NightScouttoHealthKitUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AD9FF4F22DCE978500E50BD9 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1630;
+				LastUpgradeCheck = 1630;
+				TargetAttributes = {
+					AD9FF4F92DCE978500E50BD9 = {
+						CreatedOnToolsVersion = 16.3;
+					};
+					AD9FF5082DCE978700E50BD9 = {
+						CreatedOnToolsVersion = 16.3;
+						TestTargetID = AD9FF4F92DCE978500E50BD9;
+					};
+					AD9FF5122DCE978700E50BD9 = {
+						CreatedOnToolsVersion = 16.3;
+						TestTargetID = AD9FF4F92DCE978500E50BD9;
+					};
+				};
+			};
+			buildConfigurationList = AD9FF4F52DCE978500E50BD9 /* Build configuration list for PBXProject "NightScouttoHealthKit" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AD9FF4F12DCE978500E50BD9;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = AD9FF4FB2DCE978500E50BD9 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AD9FF4F92DCE978500E50BD9 /* NightScouttoHealthKit */,
+				AD9FF5082DCE978700E50BD9 /* NightScouttoHealthKitTests */,
+				AD9FF5122DCE978700E50BD9 /* NightScouttoHealthKitUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AD9FF4F82DCE978500E50BD9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD9FF5072DCE978700E50BD9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD9FF5112DCE978700E50BD9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AD9FF4F62DCE978500E50BD9 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD9FF5052DCE978700E50BD9 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD9FF50F2DCE978700E50BD9 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AD9FF50B2DCE978700E50BD9 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AD9FF4F92DCE978500E50BD9 /* NightScouttoHealthKit */;
+			targetProxy = AD9FF50A2DCE978700E50BD9 /* PBXContainerItemProxy */;
+		};
+		AD9FF5152DCE978700E50BD9 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AD9FF4F92DCE978500E50BD9 /* NightScouttoHealthKit */;
+			targetProxy = AD9FF5142DCE978700E50BD9 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AD9FF51B2DCE978700E50BD9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = HBDY6QA3N9;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AD9FF51C2DCE978700E50BD9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = HBDY6QA3N9;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AD9FF51E2DCE978700E50BD9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HBDY6QA3N9;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ProDiabeticsTeam.NightScouttoHealthKit;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AD9FF51F2DCE978700E50BD9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HBDY6QA3N9;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ProDiabeticsTeam.NightScouttoHealthKit;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		AD9FF5212DCE978700E50BD9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HBDY6QA3N9;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ProDiabeticsTeam.NightScouttoHealthKitTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NightScouttoHealthKit.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NightScouttoHealthKit";
+			};
+			name = Debug;
+		};
+		AD9FF5222DCE978700E50BD9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HBDY6QA3N9;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ProDiabeticsTeam.NightScouttoHealthKitTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NightScouttoHealthKit.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NightScouttoHealthKit";
+			};
+			name = Release;
+		};
+		AD9FF5242DCE978700E50BD9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HBDY6QA3N9;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ProDiabeticsTeam.NightScouttoHealthKitUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = NightScouttoHealthKit;
+			};
+			name = Debug;
+		};
+		AD9FF5252DCE978700E50BD9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HBDY6QA3N9;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ProDiabeticsTeam.NightScouttoHealthKitUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = NightScouttoHealthKit;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AD9FF4F52DCE978500E50BD9 /* Build configuration list for PBXProject "NightScouttoHealthKit" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD9FF51B2DCE978700E50BD9 /* Debug */,
+				AD9FF51C2DCE978700E50BD9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AD9FF51D2DCE978700E50BD9 /* Build configuration list for PBXNativeTarget "NightScouttoHealthKit" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD9FF51E2DCE978700E50BD9 /* Debug */,
+				AD9FF51F2DCE978700E50BD9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AD9FF5202DCE978700E50BD9 /* Build configuration list for PBXNativeTarget "NightScouttoHealthKitTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD9FF5212DCE978700E50BD9 /* Debug */,
+				AD9FF5222DCE978700E50BD9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AD9FF5232DCE978700E50BD9 /* Build configuration list for PBXNativeTarget "NightScouttoHealthKitUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD9FF5242DCE978700E50BD9 /* Debug */,
+				AD9FF5252DCE978700E50BD9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = AD9FF4F22DCE978500E50BD9 /* Project object */;
+}
