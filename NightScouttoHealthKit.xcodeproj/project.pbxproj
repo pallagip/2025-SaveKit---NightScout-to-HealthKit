@@ -29,20 +29,23 @@
 		AD9FF5132DCE978700E50BD9 /* NightScouttoHealthKitUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NightScouttoHealthKitUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		AD9FF5302DCE9C9E00E50BD9 /* Exceptions for "NightScouttoHealthKit" folder in "NightScouttoHealthKit" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = AD9FF4F92DCE978500E50BD9 /* NightScouttoHealthKit */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		AD9FF4FC2DCE978500E50BD9 /* NightScouttoHealthKit */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				AD9FF5302DCE9C9E00E50BD9 /* Exceptions for "NightScouttoHealthKit" folder in "NightScouttoHealthKit" target */,
+			);
 			path = NightScouttoHealthKit;
-			sourceTree = "<group>";
-		};
-		AD9FF50C2DCE978700E50BD9 /* NightScouttoHealthKitTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = NightScouttoHealthKitTests;
-			sourceTree = "<group>";
-		};
-		AD9FF5162DCE978700E50BD9 /* NightScouttoHealthKitUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = NightScouttoHealthKitUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -76,8 +79,6 @@
 			isa = PBXGroup;
 			children = (
 				AD9FF4FC2DCE978500E50BD9 /* NightScouttoHealthKit */,
-				AD9FF50C2DCE978700E50BD9 /* NightScouttoHealthKitTests */,
-				AD9FF5162DCE978700E50BD9 /* NightScouttoHealthKitUITests */,
 				AD9FF4FB2DCE978500E50BD9 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -130,9 +131,6 @@
 			dependencies = (
 				AD9FF50B2DCE978700E50BD9 /* PBXTargetDependency */,
 			);
-			fileSystemSynchronizedGroups = (
-				AD9FF50C2DCE978700E50BD9 /* NightScouttoHealthKitTests */,
-			);
 			name = NightScouttoHealthKitTests;
 			packageProductDependencies = (
 			);
@@ -152,9 +150,6 @@
 			);
 			dependencies = (
 				AD9FF5152DCE978700E50BD9 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				AD9FF5162DCE978700E50BD9 /* NightScouttoHealthKitUITests */,
 			);
 			name = NightScouttoHealthKitUITests;
 			packageProductDependencies = (
@@ -395,16 +390,22 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = NightScouttoHealthKit/NightScouttoHealthKit.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = HBDY6QA3N9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NightScouttoHealthKit/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = SaveKit;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to HealthKit to store your glucose readings.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs access to HealthKit to update your glucose readings.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -423,16 +424,22 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = NightScouttoHealthKit/NightScouttoHealthKit.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = HBDY6QA3N9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = NightScouttoHealthKit/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = SaveKit;
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to HealthKit to store your glucose readings.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs access to HealthKit to update your glucose readings.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
