@@ -38,7 +38,9 @@ class SyncCoordinator {
     }
     
     /// Performs the full sync process with detailed logging
-    func performSync() async throws {
+    /// - Parameter minutes: Number of minutes of data to fetch (default: 25)
+    /// - Returns: Number of new entries that were saved to HealthKit
+    func performSync(minutes: Int = 25) async throws -> Int {
         let syncStartTime = Date()
         print("🔄 Starting sync at: \(formatTime(syncStartTime)) (\(syncStartTime))")
         
@@ -48,9 +50,9 @@ class SyncCoordinator {
             try await healthKitManager.requestAuthorization()
             print("✅ HealthKit authorization granted")
             
-            // Fetch the last 10 minutes of data from Nightscout
-            print("📥 Fetching glucose data from Nightscout...")
-            let entries = try await nightscoutService.fetchGlucoseData(minutes: 10)
+            // Fetch glucose data from Nightscout with specified time window
+            print("📥 Fetching \(minutes) minutes of glucose data from Nightscout...")
+            let entries = try await nightscoutService.fetchGlucoseData(minutes: minutes)
             
             // Check if we have data
             guard !entries.isEmpty else {
@@ -66,14 +68,18 @@ class SyncCoordinator {
                 print("🕒 Latest entry: \(formatTime(lastEntry.date)) - \(Int(lastEntry.sgv)) mg/dL")
             }
             
-            // Save to HealthKit
+            // Save to HealthKit and get count of newly saved entries
             print("💾 Saving entries to HealthKit...")
-            try await healthKitManager.saveEntriesToHealthKit(entries)
+            let savedCount = try await healthKitManager.saveEntriesToHealthKit(entries)
             
             // Success!
             let syncDuration = Date().timeIntervalSince(syncStartTime)
             print("✅ Sync completed in \(String(format: "%.2f", syncDuration)) seconds")
             print("⏱️ Time: \(formatTime(Date()))")
+            print("📊 Saved \(savedCount) new entries to HealthKit")
+            
+            // Return count of saved entries
+            return savedCount
             
         } catch {
             // Enhanced error logging
@@ -89,6 +95,9 @@ class SyncCoordinator {
             } else {
                 throw SyncError.dataFetchFailed(error)
             }
+            
+            // If we get here, no entries were saved
+            return 0
         }
     }
     
@@ -104,7 +113,7 @@ class SyncCoordinator {
     func startBackgroundSync() {
         Task.detached(priority: .background) {
             do {
-                try await self.performSync()
+                _ = try await self.performSync()
             } catch {
                 print("⚠️ Background sync failed: \(error)")
             }

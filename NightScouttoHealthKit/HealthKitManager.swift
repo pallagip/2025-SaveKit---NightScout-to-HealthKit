@@ -28,7 +28,8 @@ class HealthKitManager {
     }
 
     /// Save an array of Nightscout entries into HealthKit in mg/dL
-    func saveEntriesToHealthKit(_ entries: [Entry]) async throws {
+    /// Returns the number of new entries that were saved to HealthKit
+    func saveEntriesToHealthKit(_ entries: [Entry]) async throws -> Int {
         print("🏥 Preparing to save \(entries.count) glucose readings to HealthKit")
         
         let glucoseType = HKQuantityType.quantityType(forIdentifier: .bloodGlucose)!
@@ -44,10 +45,20 @@ class HealthKitManager {
         
         if validEntries.isEmpty {
             print("⚠️ No valid glucose readings to save")
-            return
+            return 0
+        }
+        
+        // Check which entries already exist in HealthKit to avoid duplicates
+        let uniqueEntries = try await filterOutExistingEntries(validEntries)
+        
+        print("🏥 Found \(uniqueEntries.count) unique entries that don't already exist in HealthKit")
+        
+        if uniqueEntries.isEmpty {
+            print("ℹ️ All entries already exist in HealthKit, nothing new to save")
+            return 0
         }
 
-        let samples = validEntries.map { entry -> HKQuantitySample in
+        let samples = uniqueEntries.map { entry -> HKQuantitySample in
             let quantity = HKQuantity(unit: unit, doubleValue: entry.sgv)
             
             // For debugging
@@ -55,15 +66,16 @@ class HealthKitManager {
             dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
             print("📊 Creating sample: \(entry.sgv) mg/dL at \(dateFormatter.string(from: entry.date))")
             
-            // start and end at the same timestamp
+            // Using the original timestamp from Nightscout for both start and end
             return HKQuantitySample(type: glucoseType,
                                     quantity: quantity,
                                     start: entry.date,
                                     end: entry.date)
         }
 
-        print("🏥 Saving \(samples.count) samples to HealthKit...")
+        print("🏥 Saving \(samples.count) unique samples to HealthKit...")
         
+        // Save the samples and return the count of saved samples
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             healthStore.save(samples) { success, error in
                 if let error = error {
@@ -74,6 +86,78 @@ class HealthKitManager {
                     continuation.resume()
                 }
             }
+        }
+        
+        // Return the count of newly saved entries
+        return samples.count
+    }
+    
+    /// Filter out entries that already exist in HealthKit to avoid duplicates
+    private func filterOutExistingEntries(_ entries: [Entry]) async throws -> [Entry] {
+        // Get the earliest and latest dates from the entries
+        guard let earliestDate = entries.map({ $0.date }).min(),
+              let latestDate = entries.map({ $0.date }).max() else {
+            return entries
+        }
+        
+        // Add a small buffer to ensure we capture all potential matches
+        let startDate = earliestDate.addingTimeInterval(-1) // 1 second before
+        let endDate = latestDate.addingTimeInterval(1)     // 1 second after
+        
+        print("🔍 Checking for existing entries between \(startDate) and \(endDate)")
+        
+        // Fetch existing glucose samples in the date range
+        let existingSamples = try await fetchGlucoseSamples(startDate: startDate, endDate: endDate)
+        
+        if existingSamples.isEmpty {
+            print("ℹ️ No existing samples found in this time range")
+            return entries
+        }
+        
+        print("🔍 Found \(existingSamples.count) existing samples in HealthKit for this time range")
+        
+        // Extract timestamps of existing samples
+        let existingTimestamps = Set(existingSamples.map { $0.startDate.timeIntervalSince1970 })
+        
+        // Filter out entries that already exist (match by timestamp)
+        let uniqueEntries = entries.filter { entry in
+            let timestamp = entry.date.timeIntervalSince1970
+            return !existingTimestamps.contains(timestamp)
+        }
+        
+        print("🔍 After filtering: \(uniqueEntries.count) entries are new and \(entries.count - uniqueEntries.count) already exist")
+        
+        return uniqueEntries
+    }
+    
+    /// Helper method to fetch glucose samples in a date range
+    private func fetchGlucoseSamples(startDate: Date, endDate: Date) async throws -> [HKQuantitySample] {
+        let glucoseType = HKQuantityType.quantityType(forIdentifier: .bloodGlucose)!
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+        
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[HKQuantitySample], Error>) in
+            let query = HKSampleQuery(
+                sampleType: glucoseType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: nil
+            ) { (query, samples, error) in
+                if let error = error {
+                    print("❌ Error fetching HealthKit data: \(error.localizedDescription)")
+                    continuation.resume(throwing: error)
+                    return
+                }
+                
+                guard let samples = samples as? [HKQuantitySample] else {
+                    print("ℹ️ No glucose samples found in the specified date range")
+                    continuation.resume(returning: [])
+                    return
+                }
+                
+                continuation.resume(returning: samples)
+            }
+            
+            healthStore.execute(query)
         }
     }
     
@@ -93,7 +177,7 @@ class HealthKitManager {
             let query = HKSampleQuery(
                 sampleType: glucoseType,
                 predicate: predicate,
-                limit: 20, // Limit to last 20 readings
+                limit: 10, // Limit to last 10 readings
                 sortDescriptors: [sortDescriptor]
             ) { (query, samples, error) in
                 if let error = error {

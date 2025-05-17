@@ -81,7 +81,7 @@ class NightscoutService {
         self.apiToken = apiToken
     }
     
-    func fetchGlucoseData(minutes: Int = 10) async throws -> [Entry] {
+    func fetchGlucoseData(minutes: Int = 25) async throws -> [Entry] {
         // Calculate time 'minutes' ago for finding recent entries
         let now = Date()
         let minutesAgo = now.addingTimeInterval(-Double(minutes * 60))
