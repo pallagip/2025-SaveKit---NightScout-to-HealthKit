@@ -59,7 +59,7 @@ struct ContentView: View {
                 Task {
                     do {
                         try await viewModel.saveSettings()
-                        await viewModel.scheduleNextSync()
+
                     } catch {
                         print("⚠️ Settings save failed: \(error)")
                         viewModel.lastSyncResult = "Settings error: \(error.localizedDescription)"
@@ -132,12 +132,7 @@ class ContentViewModel: ObservableObject {
         await SyncManager.shared.performSync(isBackground: false)
     }
 
-    func scheduleNextSync() async {
-        // Let SyncManager handle this
-        let next = Date().addingTimeInterval(20 * 60) // 20 min
-        print("📅 Next sync scheduled for: \(next)")
-        UserDefaults.standard.set(next, forKey: "nextSyncDate")
-    }
+
 
     func saveSettings() async throws {
         let defaults = UserDefaults.standard

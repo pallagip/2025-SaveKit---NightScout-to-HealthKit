@@ -2,11 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>BGTaskSchedulerPermittedIdentifiers</key>
-	<array>
-		<string>com.ProDiabeticsTeam.NightScouttoHealthKitv1.refresh</string>
-		<string>com.ProDiabeticsTeam.NightScouttoHealthKitv1.processing</string>
-	</array>
+
 	<key>CFBundleIcons</key>
 	<dict>
 		<key>CFBundlePrimaryIcon</key>
@@ -43,12 +39,7 @@
 			</array>
 		</dict>
 	</dict>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>fetch</string>
-		<string>processing</string>
-		<string>remote-notification</string>
-	</array>
+
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIViewControllerBasedStatusBarAppearance</key>

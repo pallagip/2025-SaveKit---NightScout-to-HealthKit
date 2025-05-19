@@ -16,18 +16,10 @@ final class SyncManager {
 
     static let shared = SyncManager()
     private init() {
-        // Observe entering background to reschedule tasks
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(appDidEnterBackground),
-            name: UIApplication.didEnterBackgroundNotification,
-            object: nil
-        )
+        // No background observers needed for manual sync only
     }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
+
 
     // MARK: - Configuration
 
@@ -52,123 +44,23 @@ final class SyncManager {
         return Date().timeIntervalSince(last)
     }
 
-    private var isSyncInProgress = false
-    private var foregroundTimer: Timer?
+
 
     // MARK: - Public API
 
     /// Call once at app startup (e.g. in AppDelegate) to kick everything off
-    func start() {
-        registerBackgroundTasks()
-        scheduleNextRefresh()
-    }
+
     
     /// Start the foreground timer if it's not already running
-    func startTimerIfNeeded() {
-        if foregroundTimer == nil {
-            startForegroundTimer()
-        }
-    }
-    
-    /// Stop the foreground timer
-    func stopTimer() {
-        foregroundTimer?.invalidate()
-        foregroundTimer = nil
-    }
-    
-    /// Calculate time until next sync is due
-    func timeUntilNextSync() -> TimeInterval {
-        return max(syncInterval - timeSinceLastSync, 0)
-    }
 
-    // MARK: - Foreground Sync
 
-    /// A short‐interval timer (fires every minute) to top up while the app is running
-    private func startForegroundTimer() {
-        foregroundTimer?.invalidate()
-        foregroundTimer = Timer.scheduledTimer(
-            timeInterval: 60,
-            target: self,
-            selector: #selector(foregroundTimerFired),
-            userInfo: nil,
-            repeats: true
-        )
-        RunLoop.main.add(foregroundTimer!, forMode: .common)
-    }
 
-    @objc private func foregroundTimerFired() {
-        guard shouldSyncNow else { return }
-        Task { await performSync(isBackground: false) }
-    }
-
-    /// Whether enough time has passed that we should sync again
-    private var shouldSyncNow: Bool {
-        return timeSinceLastSync >= syncInterval
-    }
-
-    // MARK: - Background Task Scheduling
-
-    private func registerBackgroundTasks() {
-        BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: refreshTaskId,
-            using: nil
-        ) { [weak self] task in
-            guard let self = self else { return }
-            Task {
-                await self.handleBackgroundRefresh(task: task as! BGAppRefreshTask)
-            }
-        }
-    }
-    
-    /// Schedule next background refresh task
-    func scheduleNextRefresh() {
-        // Always cancel pending so we don't double‐book
-        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: refreshTaskId)
-
-        // App Refresh (~every 20 min)
-        let refreshRequest = BGAppRefreshTaskRequest(identifier: refreshTaskId)
-        refreshRequest.earliestBeginDate = Date(timeIntervalSinceNow: syncInterval)
-        do {
-            try BGTaskScheduler.shared.submit(refreshRequest)
-            print("✅ Scheduled BGAppRefreshTaskRequest")
-        } catch {
-            print("❌ Failed to schedule BGAppRefreshTaskRequest: \(error)")
-        }
-    }
-
-    @objc private func appDidEnterBackground() {
-        // Whenever we go background, make sure tasks are queued
-        scheduleNextRefresh()
-    }
-
-    // MARK: - Background Task Handling
-
-    /// Handle background refresh task
-    private func handleBackgroundRefresh(task: BGAppRefreshTask) async {
-        // Immediately schedule the next one
-        scheduleNextRefresh()
-
-        // Perform a sync
-        let work = Task {
-            await performSync(isBackground: true)
-            task.setTaskCompleted(success: true)
-        }
-
-        task.expirationHandler = {
-            work.cancel()
-            task.setTaskCompleted(success: false)
-        }
-    }
 
     // MARK: - Core Sync Logic
 
     /// Trigger a sync. Returns number of new entries (if you care).
     @discardableResult
     func performSync(isBackground: Bool, extended: Bool = false) async -> Int {
-        guard !isSyncInProgress else { return 0 }
-        isSyncInProgress = true
-        defer { isSyncInProgress = false }
-
         do {
             let coordinator = makeCoordinator()
             let lookbackMinutes = isBackground ? 40 : 20

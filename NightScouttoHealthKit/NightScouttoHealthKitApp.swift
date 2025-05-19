@@ -33,26 +33,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        SyncManager.shared.start()
         return true
     }
 
-    func applicationDidEnterBackground(_ application: UIApplication) {
-        // Ensure background tasks are queued when entering background
-        SyncManager.shared.scheduleNextRefresh()
-    }
 
-    func applicationDidBecomeActive(_ application: UIApplication) {
-        // Restart foreground timer
-        SyncManager.shared.start()
-        
-        // Optionally, trigger an immediate sync if it's been a while
-        if SyncManager.shared.timeSinceLastSync > 4 * 60 {
-            Task {
-                _ = await SyncManager.shared.performSync(isBackground: false)
-            }
-        }
-    }
 }
 
 // MARK: - SwiftData Model
