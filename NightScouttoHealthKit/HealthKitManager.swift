@@ -167,7 +167,7 @@ class HealthKitManager {
         
         // Create a predicate for the last hour
         let now = Date()
-        let startDate = now.addingTimeInterval(-3600) // 1 hour ago
+        let startDate = now.addingTimeInterval(-3600) // 60 minutes ago
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: now, options: .strictStartDate)
         
         // Create the query

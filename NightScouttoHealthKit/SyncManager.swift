@@ -24,7 +24,7 @@ final class SyncManager {
     // MARK: - Configuration
 
     /// How often (at minimum) we want to sync
-    private let syncInterval: TimeInterval = 20 * 60 // 20 minutes
+    private let syncInterval: TimeInterval = 60 * 60 // 60 minutes
 
     /// Identifiers must match those you register in AppDelegate
     private let refreshTaskId = "com.ProDiabeticsTeam.NightScouttoHealthKitv1"
@@ -63,7 +63,7 @@ final class SyncManager {
     func performSync(isBackground: Bool, extended: Bool = false) async -> Int {
         do {
             let coordinator = makeCoordinator()
-            let lookbackMinutes = isBackground ? 40 : 20
+            let lookbackMinutes = isBackground ? 120 : 60
 
             return try await coordinator.performSync(minutes: lookbackMinutes)
         } catch {
