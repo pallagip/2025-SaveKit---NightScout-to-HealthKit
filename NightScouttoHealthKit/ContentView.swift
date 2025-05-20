@@ -8,14 +8,161 @@
 import SwiftUI
 import BackgroundTasks
 import UIKit
+import CoreML
 
 struct ContentView: View {
+    var body: some View {
+        TabView {
+            BGPredictionView()
+                .tabItem {
+                    Label("Predict", systemImage: "waveform.path.ecg")
+                }
+
+            SettingsView()
+                .tabItem {
+                    Label("Settings", systemImage: "gearshape")
+                }
+        }
+    }
+}
+
+// MARK: - Blood Glucose Prediction
+struct BGPredictionView: View {
+    @State private var scaler: SequenceMinMaxScaler?
+    @StateObject private var hk = HealthKitFeatureProvider()
+    @State private var model: MLModel?
+    @State private var predictText = "—"
+    @AppStorage("useMgdlUnits") private var useMgdlUnits = true
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Text(useMgdlUnits ? "Predicted BG in 20 min (mg/dL)" : "Predicted BG in 20 min (mmol/L)")
+                .font(.headline)
+            Text(predictText)
+                .font(.system(size: 64, weight: .bold, design: .rounded))
+            HStack {
+                Button("Predict") { Task { await predict() } }
+                    .buttonStyle(.borderedProminent)
+                Button("Personalize") { Task { await personalize() } }
+                    .buttonStyle(.bordered)
+            }
+        }
+        .task {
+            await initializeApp()
+        }
+        .padding()
+    }
+
+    private func initializeApp() async {
+        do {
+            // Initialize scaler
+            scaler = try SequenceMinMaxScaler()
+            
+            // Load ML model
+            guard let modelURL = Bundle.main.url(forResource: "BGPersonal",
+                                               withExtension: "mlmodelc") else {
+                throw NSError(domain: "ModelError",
+                            code: 1,
+                            userInfo: [NSLocalizedDescriptionKey:
+                                      "Could not find BGPersonal model"])
+            }
+            model = try MLModel(contentsOf: modelURL)
+            
+            // Request HealthKit authorization
+            try await hk.requestAuth()
+            
+        } catch {
+            print("❌ Initialization error: \(error)")
+            predictText = "Init Err"
+        }
+    }
+
+    @MainActor
+    private func predict() async {
+        do {
+            guard let model = model else {
+                predictText = "No Model"
+                return
+            }
+            
+            // Get health data
+            let x = try await hk.buildWindow()
+            
+            // Transform data if scaler exists
+            if let scaler = scaler {
+                scaler.transform(x)
+            }
+            
+            // Create MLFeatureValue safely
+            let featureValue = MLFeatureValue(multiArray: x)
+            
+            // Create model input
+            let input = ["input": featureValue]
+            let inputProvider = try MLDictionaryFeatureProvider(dictionary: input)
+            
+            // Make prediction
+            let out = try await model.prediction(from: inputProvider)
+            
+            // Process result
+            guard let outputFeature = out.featureValue(for: "Identity"),
+                  let multiArray = outputFeature.multiArrayValue else {
+                throw NSError(domain: "PredictionError",
+                            code: 1,
+                            userInfo: [NSLocalizedDescriptionKey:
+                                      "Invalid model output"])
+            }
+            
+            let val = multiArray[0].doubleValue
+            if useMgdlUnits {
+                predictText = String(format: "%.0f", val * 18.0) // mg/dL
+            } else {
+                predictText = String(format: "%.1f", val) // mmol/L
+            }
+            
+        } catch {
+            predictText = "Err"
+            print("❌ predict failed:", error)
+        }
+    }
+
+    @MainActor
+    private func personalize() async {
+        do {
+            // Get latest glucose value
+            let glucoseValue = try await hk.fetchLatestGlucoseValue()
+            
+            // Store data for model personalization
+            let timestamp = Date().timeIntervalSince1970
+            let personalizationData = ["timestamp": timestamp,
+                                    "glucoseValue": glucoseValue]
+            
+            // Save to UserDefaults
+            var existingData = UserDefaults.standard.array(
+                forKey: "personalizationData") as? [[String: Any]] ?? []
+            existingData.append(personalizationData)
+            UserDefaults.standard.set(existingData,
+                                    forKey: "personalizationData")
+            
+            // Update UI
+            predictText = "✔︎ Data Collected"
+            
+        } catch {
+            predictText = "Tune Err"
+            print("❌ personalize failed:", error)
+        }
+    }
+}
+
+// MARK: - Settings & Nightscout Sync
+struct SettingsView: View {
     // Persisted settings
     @AppStorage("nightscoutBaseURL") private var nightscoutBaseURLString = ""
     @AppStorage("apiSecret")       private var apiSecret               = ""
     @AppStorage("apiToken")        private var apiToken                = ""
     // Next sync date (written when a sync is scheduled)
     @AppStorage("nextSyncDate")    private var nextSyncDate           = Date()
+    // Blood glucose units preference
+    @AppStorage("useMgdlUnits")    private var useMgdlUnits           = true
     // Field focus for keyboard management
     @FocusState private var focusedField: Field?
     private enum Field { case url, secret, token }
@@ -50,6 +197,19 @@ struct ContentView: View {
                 .padding()
                 .background(Color(.systemGray6))
                 .cornerRadius(8)
+                
+            // Blood glucose units toggle
+            Toggle(isOn: $useMgdlUnits) {
+                HStack {
+                    Text("Blood Glucose Units:")
+                    Text(useMgdlUnits ? "mg/dL" : "mmol/L")
+                        .foregroundColor(.blue)
+                        .fontWeight(.bold)
+                }
+            }
+            .padding()
+            .background(Color(.systemGray6))
+            .cornerRadius(8)
 
             // Save settings & schedule next sync
             Button("Save Settings") {
@@ -59,7 +219,6 @@ struct ContentView: View {
                 Task {
                     do {
                         try await viewModel.saveSettings()
-
                     } catch {
                         print("⚠️ Settings save failed: \(error)")
                         viewModel.lastSyncResult = "Settings error: \(error.localizedDescription)"
@@ -76,10 +235,18 @@ struct ContentView: View {
 
             // Manual sync
             Button {
-                Task { await viewModel.handleManualSync() }
+                Task {
+                    do {
+                        try await viewModel.handleManualSync()
+                    } catch {
+                        print("❌ Manual sync failed: \(error)")
+                        viewModel.lastSyncResult = "Sync failed: \(error.localizedDescription)"
+                    }
+                }
             } label: {
                 if viewModel.syncInProgress {
-                    ProgressView().progressViewStyle(CircularProgressViewStyle())
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
                 } else {
                     Text("Sync Now")
                         .frame(maxWidth: .infinity)
@@ -90,8 +257,6 @@ struct ContentView: View {
             .foregroundColor(.white)
             .cornerRadius(10)
             .disabled(viewModel.syncInProgress)
-
-            // Countdown removed
 
             // Status
             if let result = viewModel.lastSyncResult {
@@ -104,7 +269,6 @@ struct ContentView: View {
             Spacer()
         }
         .padding()
-
     }
 }
 
@@ -114,7 +278,7 @@ class ContentViewModel: ObservableObject {
     @Published var lastSyncResult: String?
 
 
-    func handleManualSync() async {
+    func handleManualSync() async throws {
         syncInProgress = true
         defer { syncInProgress = false }
 
@@ -129,7 +293,7 @@ class ContentViewModel: ObservableObject {
     }
 
     func triggerSync() async throws -> Int {
-        await SyncManager.shared.performSync(isBackground: false)
+        return await SyncManager.shared.performSync(isBackground: false)
     }
 
 
@@ -156,8 +320,3 @@ class ContentViewModel: ObservableObject {
         }
     }
 }
-
-
-
-// The background‐refresh task identifier
-fileprivate let refreshTaskID = "com.ProDiabeticsTeam.NightScouttoHealthKit.refresh"

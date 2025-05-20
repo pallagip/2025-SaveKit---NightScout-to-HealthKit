@@ -24,9 +24,9 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		AD9FF4FA2DCE978500E50BD9 /* NightScouttoHealthKit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NightScouttoHealthKit.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		AD9FF5092DCE978700E50BD9 /* NightScouttoHealthKitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NightScouttoHealthKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		AD9FF5132DCE978700E50BD9 /* NightScouttoHealthKitUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NightScouttoHealthKitUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		ADF4CB952DDCC2D80036F790 /* NightScouttoHealthKit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NightScouttoHealthKit.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		ADF4CBB52DDCCD220036F790 /* NightScouttoHealthKitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NightScouttoHealthKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		ADF4CBB62DDCCD220036F790 /* NightScouttoHealthKitUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NightScouttoHealthKitUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -79,18 +79,10 @@
 			isa = PBXGroup;
 			children = (
 				AD9FF4FC2DCE978500E50BD9 /* NightScouttoHealthKit */,
-				AD9FF4FB2DCE978500E50BD9 /* Products */,
+				ADF4CB952DDCC2D80036F790 /* NightScouttoHealthKit.app */,
+				ADF4CBB52DDCCD220036F790 /* NightScouttoHealthKitTests.xctest */,
+				ADF4CBB62DDCCD220036F790 /* NightScouttoHealthKitUITests.xctest */,
 			);
-			sourceTree = "<group>";
-		};
-		AD9FF4FB2DCE978500E50BD9 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				AD9FF4FA2DCE978500E50BD9 /* NightScouttoHealthKit.app */,
-				AD9FF5092DCE978700E50BD9 /* NightScouttoHealthKitTests.xctest */,
-				AD9FF5132DCE978700E50BD9 /* NightScouttoHealthKitUITests.xctest */,
-			);
-			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -115,7 +107,7 @@
 			packageProductDependencies = (
 			);
 			productName = NightScouttoHealthKit;
-			productReference = AD9FF4FA2DCE978500E50BD9 /* NightScouttoHealthKit.app */;
+			productReference = ADF4CB952DDCC2D80036F790 /* NightScouttoHealthKit.app */;
 			productType = "com.apple.product-type.application";
 		};
 		AD9FF5082DCE978700E50BD9 /* NightScouttoHealthKitTests */ = {
@@ -135,7 +127,7 @@
 			packageProductDependencies = (
 			);
 			productName = NightScouttoHealthKitTests;
-			productReference = AD9FF5092DCE978700E50BD9 /* NightScouttoHealthKitTests.xctest */;
+			productReference = ADF4CBB52DDCCD220036F790 /* NightScouttoHealthKitTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
 		AD9FF5122DCE978700E50BD9 /* NightScouttoHealthKitUITests */ = {
@@ -155,7 +147,7 @@
 			packageProductDependencies = (
 			);
 			productName = NightScouttoHealthKitUITests;
-			productReference = AD9FF5132DCE978700E50BD9 /* NightScouttoHealthKitUITests.xctest */;
+			productReference = ADF4CBB62DDCCD220036F790 /* NightScouttoHealthKitUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -191,7 +183,7 @@
 			mainGroup = AD9FF4F12DCE978500E50BD9;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
-			productRefGroup = AD9FF4FB2DCE978500E50BD9 /* Products */;
+			productRefGroup = AD9FF4F12DCE978500E50BD9;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
