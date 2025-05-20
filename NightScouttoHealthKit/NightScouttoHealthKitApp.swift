@@ -21,7 +21,7 @@ struct NightScouttoHealthKitApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .modelContainer(for: [Item.self])
+                .modelContainer(for: [Prediction.self])
         }
     }
 }
@@ -39,12 +39,4 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
 }
 
-// MARK: - SwiftData Model
-@Model
-final class Item: Identifiable {
-    @Attribute(.unique) var id: UUID = UUID()
-    var title: String
-    init(title: String) {
-        self.title = title
-    }
-}
+// Background tasks are configured in AppDelegate per the memory about continuous sync

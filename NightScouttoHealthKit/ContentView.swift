@@ -9,6 +9,7 @@ import SwiftUI
 import BackgroundTasks
 import UIKit
 import CoreML
+import SwiftData
 
 struct ContentView: View {
     var body: some View {
@@ -33,18 +34,80 @@ struct BGPredictionView: View {
     @State private var model: MLModel?
     @State private var predictText = "—"
     @AppStorage("useMgdlUnits") private var useMgdlUnits = true
+    
+    // SwiftData access
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \Prediction.timestamp, order: .reverse) private var predictions: [Prediction]
 
     var body: some View {
         VStack(spacing: 24) {
-            Text(useMgdlUnits ? "Predicted BG in 20 min (mg/dL)" : "Predicted BG in 20 min (mmol/L)")
-                .font(.headline)
-            Text(predictText)
-                .font(.system(size: 64, weight: .bold, design: .rounded))
-            HStack {
-                Button("Predict") { Task { await predict() } }
-                    .buttonStyle(.borderedProminent)
-                Button("Personalize") { Task { await personalize() } }
-                    .buttonStyle(.bordered)
+            // Prediction section
+            VStack(spacing: 16) {
+                Text(useMgdlUnits ? "Predicted BG in 20 min (mg/dL)" : "Predicted BG in 20 min (mmol/L)")
+                    .font(.headline)
+                Text(predictText)
+                    .font(.system(size: 64, weight: .bold, design: .rounded))
+                HStack {
+                    Button("Predict") { Task { await predict() } }
+                        .buttonStyle(.borderedProminent)
+                    Button("Personalize") { Task { await personalize() } }
+                        .buttonStyle(.bordered)
+                }
+            }
+            .padding()
+            .background(Color(.systemGray6))
+            .cornerRadius(12)
+            
+            // Prediction history section
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Prediction History")
+                    .font(.headline)
+                    .padding(.bottom, 4)
+                
+                if predictions.isEmpty {
+                    Text("No predictions yet")
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding()
+                } else {
+                    // Header row
+                    HStack {
+                        Text("Date & Time")
+                            .fontWeight(.medium)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("Value")
+                            .fontWeight(.medium)
+                            .frame(width: 60, alignment: .trailing)
+                        Text("Units")
+                            .fontWeight(.medium)
+                            .frame(width: 60, alignment: .leading)
+                    }
+                    .padding(.horizontal, 8)
+                    .font(.caption)
+                    
+                    // Prediction list
+                    ScrollView {
+                        LazyVStack(spacing: 4) {
+                            ForEach(predictions) { prediction in
+                                HStack {
+                                    Text(prediction.formattedDate)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    Text(prediction.formattedValue)
+                                        .frame(width: 60, alignment: .trailing)
+                                    Text(prediction.units)
+                                        .frame(width: 60, alignment: .leading)
+                                }
+                                .padding(.vertical, 4)
+                                .padding(.horizontal, 8)
+                                .background(Color(.systemBackground))
+                                .cornerRadius(4)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 200)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(8)
+                }
             }
         }
         .task {
@@ -119,6 +182,16 @@ struct BGPredictionView: View {
                 predictText = String(format: "%.1f", val) // mmol/L
             }
             
+            // Save prediction to SwiftData
+            // Always store the value in mmol/L internally for consistency
+            let prediction = Prediction(
+                timestamp: Date(),
+                predictionValue: val, // Already in mmol/L
+                usedMgdlUnits: useMgdlUnits
+            )
+            modelContext.insert(prediction)
+            try modelContext.save()
+            
         } catch {
             predictText = "Err"
             print("❌ predict failed:", error)
@@ -166,12 +239,17 @@ struct SettingsView: View {
     // Field focus for keyboard management
     @FocusState private var focusedField: Field?
     private enum Field { case url, secret, token }
+    
+    // For CSV export
+    @Environment(\.modelContext) private var modelContext
+    @State private var showingExportSuccess = false
 
     // View model (no parameters → safe to initialize here)
     @StateObject private var viewModel = ContentViewModel()
 
     var body: some View {
-        VStack(spacing: 16) {
+        ScrollView {
+            VStack(spacing: 16) {
             // Settings fields
             TextField("Nightscout URL (e.g. https://mysite...)", text: $nightscoutBaseURLString)
                 .keyboardType(.URL)
@@ -266,9 +344,34 @@ struct SettingsView: View {
                     .padding(.top)
             }
 
-            Spacer()
+            // Export predictions button
+            Button {
+                if let fileURL = CSVExportManager.shared.exportPredictions(from: modelContext) {
+                    // Get the root view controller
+                    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                          let rootViewController = windowScene.windows.first?.rootViewController else {
+                        return
+                    }
+                    
+                    // Share the CSV file
+                    CSVExportManager.shared.shareCSV(from: fileURL, presenter: rootViewController)
+                    showingExportSuccess = true
+                }
+            } label: {
+                Text("Export Predictions")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.orange)
+            .padding(.top, 8)
+            .alert("Export Ready", isPresented: $showingExportSuccess) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("Your predictions have been exported to CSV format. Choose where to save or share the file.")
+            }
+            }
+            .padding()
         }
-        .padding()
     }
 }
 
