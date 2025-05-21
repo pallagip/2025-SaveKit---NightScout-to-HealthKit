@@ -517,15 +517,28 @@ struct SettingsView: View {
 
             // Export predictions button
             Button {
-                if let fileURL = CSVExportManager.shared.exportPredictions(from: modelContext) {
-                    // Get the root view controller
-                    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                          let rootViewController = windowScene.windows.first?.rootViewController else {
-                        return
+                // Use Task to handle async operation
+                Task {
+                    do {
+                        // Show activity indicator or feedback while running
+                        viewModel.syncInProgress = true
+                        
+                        // Call the async export function
+                        if let fileURL = await CSVExportManager.shared.exportPredictions(from: modelContext) {
+                            // Get the root view controller
+                            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                               let rootViewController = windowScene.windows.first?.rootViewController {
+                                
+                                // Share the CSV file with actual values included
+                                CSVExportManager.shared.shareCSV(from: fileURL, presenter: rootViewController)
+                            }
+                        }
+                    } catch {
+                        print("❌ Error exporting predictions: \(error)")
                     }
                     
-                    // Share the CSV file without showing alert
-                    CSVExportManager.shared.shareCSV(from: fileURL, presenter: rootViewController)
+                    // Hide activity indicator when done
+                    viewModel.syncInProgress = false
                 }
             } label: {
                 Text("Export Predictions")

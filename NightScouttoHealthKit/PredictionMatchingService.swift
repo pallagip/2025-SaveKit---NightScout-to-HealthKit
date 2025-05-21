@@ -48,9 +48,15 @@ class PredictionMatchingService {
             return 0
         }
         
-        // Add an extra hour to the end time to account for the delay in getting actual readings
-        let startDate = oldestPrediction
-        let endDate = max(newestPrediction.addingTimeInterval(3600), Date())
+        // Add a much larger window to ensure we find matches
+        // Start 1 hour before the oldest prediction to account for readings that happened just before predictions
+        let startDate = oldestPrediction.addingTimeInterval(-3600)
+        
+        // End time should include the current time plus enough buffer to find matches for recent predictions
+        // We'll use a 24-hour window from the newest prediction to be safe
+        let endDate = max(newestPrediction.addingTimeInterval(24 * 3600), Date())
+        
+        print("📆 Time range: \(startDate.formatted()) to \(endDate.formatted())")
         
         // Fetch all glucose readings from HealthKit in this time range
         let samples = try await healthKitManager.fetchGlucoseForTimeRange(startDate: startDate, endDate: endDate)
@@ -72,20 +78,31 @@ class PredictionMatchingService {
                 continue
             }
             
-            // Find the closest glucose reading to this prediction's expected time
-            // (which should be 20 minutes after the prediction time)
-            if let (sample, value) = healthKitManager.findClosestGlucoseReading(to: prediction.timestamp, in: samples) {
+            // The target time is approximately 20 minutes after the prediction timestamp
+            // This is when we expect to have the actual glucose reading to compare against
+            let targetTime = prediction.timestamp.addingTimeInterval(20 * 60) // 20 minutes later
+            
+            print("🔍 Looking for match near \(targetTime.formatted())") // for debugging
+            
+            // Use an extended tolerance window (60 minutes instead of the default 30)
+            if let (sample, value) = healthKitManager.findClosestGlucoseReading(to: prediction.timestamp, in: samples, tolerance: 3600) {
                 // Calculate time difference in minutes for logging
-                let timeDifferenceMinutes = abs(sample.startDate.timeIntervalSince(prediction.timestamp.addingTimeInterval(20 * 60))) / 60
+                let predictionTime = prediction.timestamp
+                let actualTime = sample.startDate
+                let timeDifferenceMinutes = abs(actualTime.timeIntervalSince(predictionTime.addingTimeInterval(20 * 60))) / 60
                 
                 print("✅ Found match for prediction at \(prediction.formattedDate):")
+                print("   → Prediction time: \(predictionTime.formatted())")
+                print("   → Actual reading time: \(actualTime.formatted())")
                 print("   → Actual BG: \(String(format: "%.1f", value)) mmol/L")
-                print("   → Time difference: \(String(format: "%.1f", timeDifferenceMinutes)) minutes")
+                print("   → Time difference: \(String(format: "%.1f", timeDifferenceMinutes)) minutes from expected")
                 
                 // Update the prediction
                 prediction.actualBG = value
                 prediction.actualBGTimestamp = sample.startDate
                 updatedCount += 1
+            } else {
+                print("⚠️ No match found for prediction at \(prediction.formattedDate)")
             }
         }
         
@@ -94,7 +111,14 @@ class PredictionMatchingService {
             try context.save()
             print("✅ Successfully updated \(updatedCount) predictions with actual values")
         } else {
-            print("ℹ️ No predictions were updated with actual values")
+            print("⚠️ No predictions were updated with actual values")
+            
+            // Extra debugging to help diagnose the issue
+            print("💡 DEBUG INFO: Found \(samples.count) total samples in time range")
+            if !samples.isEmpty {
+                print("💡 First sample time: \(samples.first!.startDate.formatted())")
+                print("💡 Last sample time: \(samples.last!.startDate.formatted())")
+            }
         }
         
         return updatedCount
