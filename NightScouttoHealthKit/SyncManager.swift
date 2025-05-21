@@ -59,12 +59,24 @@ final class SyncManager {
     // MARK: - Core Sync Logic
 
     /// Trigger a sync. Returns number of new entries (if you care).
+    /// - Parameters:
+    ///   - isBackground: Whether this sync is being performed in background mode
+    ///   - extended: Whether to perform an extended sync
+    ///   - minutes: Custom time window in minutes to fetch data for (overrides default behavior)
+    /// - Returns: Number of new entries saved to HealthKit
     @discardableResult
-    func performSync(isBackground: Bool, extended: Bool = false) async -> Int {
+    func performSync(isBackground: Bool, extended: Bool = false, minutes: Int? = nil) async -> Int {
         do {
             let coordinator = makeCoordinator()
-            let lookbackMinutes = isBackground ? 120 : 60
-
+            
+            // Use custom minutes if provided, otherwise use default logic
+            let lookbackMinutes: Int
+            if let minutes = minutes {
+                lookbackMinutes = minutes
+            } else {
+                lookbackMinutes = isBackground ? 120 : 60
+            }
+            
             return try await coordinator.performSync(minutes: lookbackMinutes)
         } catch {
             print("Sync failed: \(error)")

@@ -18,7 +18,7 @@ final class SequenceMinMaxScaler {
         var range: [Float] { zip(max, min).map { $0 - $1 } }
     }
 
-    private let p: Params
+    let params: Params  // Made public for inverse transformation
 
     /// Load params from *scaler_params.json* in the main bundle
     init() throws {
@@ -33,8 +33,8 @@ final class SequenceMinMaxScaler {
                     "includes NightScouttoHealthKit."])
         }
         let data = try Data(contentsOf: url)
-        p = try JSONDecoder().decode(Params.self, from: data)
-        precondition(p.min.count == 4 && p.max.count == 4, "Expect 4 features")
+        params = try JSONDecoder().decode(Params.self, from: data)
+        precondition(params.min.count == 4 && params.max.count == 4, "Expect 4 features")
     }
 
     /// In-place scale of a [1, 8, 4] MLMultiArray (Float32)
@@ -49,7 +49,7 @@ final class SequenceMinMaxScaler {
             for f in 0..<featCnt {
                 let idx = t * featCnt + f                      // (1 × 8 × 4) flatten
                 let v   = ptr[idx]
-                ptr[idx] = (v - p.min[f]) / p.range[f]         // (v - min) / (max - min)
+                ptr[idx] = (v - params.min[f]) / params.range[f]         // (v - min) / (max - min)
             }
         }
     }
