@@ -398,7 +398,7 @@ struct SettingsView: View {
     private enum Field { case url, secret, token }
     
     // For CSV export
-    @State private var showingExportSuccess = false
+
 
     // View model (no parameters → safe to initialize here)
     @StateObject private var viewModel = ContentViewModel()
@@ -524,9 +524,8 @@ struct SettingsView: View {
                         return
                     }
                     
-                    // Share the CSV file
+                    // Share the CSV file without showing alert
                     CSVExportManager.shared.shareCSV(from: fileURL, presenter: rootViewController)
-                    showingExportSuccess = true
                 }
             } label: {
                 Text("Export Predictions")
@@ -535,11 +534,6 @@ struct SettingsView: View {
             .buttonStyle(.bordered)
             .tint(.orange)
             .padding(.top, 8)
-            .alert("Export Ready", isPresented: $showingExportSuccess) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text("Your predictions have been exported to CSV format. Choose where to save or share the file.")
-            }
             }
             .padding()
         }
