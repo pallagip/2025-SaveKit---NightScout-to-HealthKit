@@ -40,6 +40,7 @@ struct BGPredictionView: View {
     // SwiftData access
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Prediction.timestamp, order: .reverse) private var predictions: [Prediction]
+    @State private var refreshID = UUID() // Track when to refresh predictions
 
     var body: some View {
         VStack(spacing: 24) {
@@ -79,15 +80,12 @@ struct BGPredictionView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Text("Value")
                             .fontWeight(.medium)
-                            .frame(width: 60, alignment: .trailing)
-                        Text("Units")
-                            .fontWeight(.medium)
-                            .frame(width: 60, alignment: .leading)
+                            .frame(width: 80, alignment: .trailing)
                     }
                     .padding(.horizontal, 8)
                     .font(.caption)
                     
-                    // Prediction list
+                    // Prediction list - will refresh when refreshID changes
                     ScrollView {
                         LazyVStack(spacing: 4) {
                             ForEach(predictions) { prediction in
@@ -95,16 +93,16 @@ struct BGPredictionView: View {
                                     Text(prediction.formattedDate)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                     Text(prediction.formattedValue)
-                                        .frame(width: 60, alignment: .trailing)
-                                    Text(prediction.units)
-                                        .frame(width: 60, alignment: .leading)
+                                        .frame(width: 80, alignment: .trailing)
                                 }
                                 .padding(.vertical, 4)
                                 .padding(.horizontal, 8)
                                 .background(Color(.systemBackground))
                                 .cornerRadius(4)
+                                .id(prediction.id) // Ensure each row has unique ID
                             }
                         }
+                        .id(refreshID) // Force refresh when this ID changes
                     }
                     .frame(maxHeight: 200)
                     .background(Color(.systemGray6))
@@ -313,15 +311,39 @@ struct BGPredictionView: View {
                 predictText = String(format: "%.1f", finalPrediction) // mmol/L
             }
             
-            // Save prediction to SwiftData
+            // Save prediction to SwiftData with all metadata
             // Always store the value in mmol/L internally for consistency
             let prediction = Prediction(
                 timestamp: Date(),
-                predictionValue: finalPrediction, // Final, realistic BG value in mmol/L
-                usedMgdlUnits: useMgdlUnits
+                predictionValue: finalPrediction,
+                usedMgdlUnits: useMgdlUnits,
+                currentBG: currentBG,
+                stabilityStatus: isStable ? "STABLE" : (bgTrend > 0 ? "RISING" : "FALLING"),
+                modelOutput: scaledPrediction,
+                modelPredictedChange: modelPredictedChange,
+                observedTrend: bgTrend,
+                modelWeight: modelWeight,
+                trendWeight: trendWeight,
+                finalPredictedChange: weightedChange
             )
+            
+            // Save the prediction and ensure UI is updated
             modelContext.insert(prediction)
-            try modelContext.save()
+            
+            // This try-catch block ensures we capture any persistence errors
+            do {
+                try modelContext.save()
+                print("✅ Prediction saved successfully")
+                
+                // Force UI refresh by updating the refreshID
+                // This ensures the prediction list is updated immediately
+                await MainActor.run { 
+                    self.refreshID = UUID()
+                    print("UI refresh triggered")
+                }
+            } catch {
+                print("❌ Error saving prediction: \(error)")
+            }
             
         } catch {
             predictText = "Err"
