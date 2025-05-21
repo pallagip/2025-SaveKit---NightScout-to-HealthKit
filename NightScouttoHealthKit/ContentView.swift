@@ -189,14 +189,28 @@ struct BGPredictionView: View {
             if lastGlucoseReading > 0 && lastReadingTimestamp != nil {
                 // Calculate the rate of change per minute
                 let timeDiff = Date().timeIntervalSince(lastReadingTimestamp!) / 60.0 // in minutes
-                if timeDiff > 0 {
+                
+                // Only calculate trend if enough time has passed (at least 1 minute)
+                // to avoid extreme values from tiny time differences
+                if timeDiff >= 1.0 {
                     let bgDiff = currentBG - lastGlucoseReading
                     let rateOfChange = bgDiff / timeDiff // mmol/L per minute
-                    // Extrapolate to predict 20 minutes ahead based on just the trend
-                    bgTrend = rateOfChange * 20.0
                     
-                    print("BG trend: \(bgTrend > 0 ? "rising" : "falling") at \(abs(rateOfChange)) mmol/L per minute")
+                    // Apply a reasonable cap to rate of change (±0.3 mmol/L per minute)
+                    // This is already quite rapid for BG changes
+                    let cappedRateOfChange = min(0.3, max(-0.3, rateOfChange))
+                    
+                    // Extrapolate to predict 20 minutes ahead based on just the trend
+                    // but with a damping factor to be conservative in predictions
+                    let dampingFactor = 0.7 // reduce the impact of the trend
+                    bgTrend = cappedRateOfChange * 20.0 * dampingFactor
+                    
+                    print("BG trend: \(bgTrend > 0 ? "rising" : "falling") at \(abs(cappedRateOfChange)) mmol/L per minute")
+                } else {
+                    print("Too little time has passed for reliable trend calculation (\(timeDiff) minutes)")
                 }
+            } else {
+                print("First reading - no trend data available yet")
             }
             
             // Update the last reading for next time
@@ -217,21 +231,64 @@ struct BGPredictionView: View {
             // 1. The model output (but with lower weight if it contradicts observed trend)
             // 2. The observed trend (with higher weight)
             
-            // The model weight is lower when its prediction contradicts the observed trend
-            let modelWeight = scaledPrediction < 0.4 && bgTrend > 0 ? 0.3 : 0.7
-            let trendWeight = 1.0 - modelWeight
+            // If BG is relatively stable (trend is small), put less weight on both predictions
+            // and more weight on the current BG value
+            let isStable = abs(bgTrend) < 1.0 // Less than 1 mmol/L change predicted over 20 min
             
-            // Normalize the model's prediction (0.28 seems to predict a significant drop)
+            // Raw model output seems to consistently predict a significant drop regardless of actual trend
+            // For a 0.28 value (what we're consistently seeing), the model is predicting a large drop
+            
+            // Normalize the model's prediction (0.28 is about -0.44 on a -1 to 1 scale)
             let normalizedFactor = (scaledPrediction - 0.5) * 2 // Convert to -1 to +1 range
             
-            // Determine reasonable change range (up to 7 mmol/L in 20 minutes)
-            let maxChangeRange = 7.0
+            // Determine reasonable change range (up to 4 mmol/L in 20 minutes) - more conservative
+            let maxChangeRange = 4.0
             
             // Calculate model's predicted change
             let modelPredictedChange = normalizedFactor * maxChangeRange
             
-            // Combine the model prediction with the observed trend
-            let weightedChange = (modelPredictedChange * modelWeight) + (bgTrend * trendWeight)
+            // For weighting, consider:
+            // 1. When BG is stable, trust neither model nor trend too much
+            // 2. When model contradicts trend, trust trend more for rising BG, model more for falling BG
+            // 3. When they agree, use a balanced approach
+            
+            let modelWeight: Double
+            let trendWeight: Double
+            
+            if isStable {
+                // When BG is stable, predict minimal change
+                modelWeight = 0.2
+                trendWeight = 0.3
+            } else if modelPredictedChange < 0 && bgTrend > 0 {
+                // Model predicts drop but trend shows rise - trust trend more
+                modelWeight = 0.2
+                trendWeight = 0.8
+            } else if modelPredictedChange < 0 && bgTrend < 0 {
+                // Both predict drop - balanced approach
+                modelWeight = 0.5
+                trendWeight = 0.5
+            } else {
+                // Other scenarios - balanced approach
+                modelWeight = 0.5
+                trendWeight = 0.5
+            }
+            
+            // Calculate the weighted change
+            let weightedChange: Double
+            if isStable {
+                // For stable BG, predict a very small change (regression to normal)
+                let targetBG = 7.0 // Normal BG target in mmol/L
+                let regressionFactor = 0.05 // Small factor for regression to mean
+                let naturalRegression = (targetBG - currentBG) * regressionFactor
+                
+                // Combine minimal model and trend influence with natural regression
+                weightedChange = (modelPredictedChange * modelWeight) + 
+                                 (bgTrend * trendWeight) + 
+                                 (naturalRegression * (1 - modelWeight - trendWeight))
+            } else {
+                // Regular weighted combination for changing BG
+                weightedChange = (modelPredictedChange * modelWeight) + (bgTrend * trendWeight)
+            }
             
             // Calculate the final predicted BG
             let predictedBG = currentBG + weightedChange
@@ -239,11 +296,15 @@ struct BGPredictionView: View {
             // Apply final reasonableness bounds
             let finalPrediction = min(maxReasonableBG, max(minReasonableBG, predictedBG))
             
-            print("Current BG: \(currentBG) mmol/L, Raw model value: \(scaledPrediction), " + 
-                  "Model predicted change: \(modelPredictedChange) mmol/L, " +
-                  "Observed trend: \(bgTrend) mmol/L, " +
-                  "Weighted change: \(weightedChange) mmol/L, " +
-                  "Final prediction: \(finalPrediction) mmol/L")
+            // Enhanced logging with stability information
+            let stabilityStatus = isStable ? "STABLE" : (bgTrend > 0 ? "RISING" : "FALLING")
+            print("[BG PREDICTION]")
+            print("Current: \(String(format: "%.1f", currentBG)) mmol/L (\(stabilityStatus))")
+            print("Model output: \(scaledPrediction) → Change: \(String(format: "%.1f", modelPredictedChange)) mmol/L")
+            print("Observed trend: \(String(format: "%.1f", bgTrend)) mmol/L over 20 min")
+            print("Weights: Model=\(modelWeight), Trend=\(trendWeight)")
+            print("Final predicted change: \(String(format: "%.1f", weightedChange)) mmol/L")
+            print("Prediction: \(String(format: "%.1f", finalPrediction)) mmol/L in 20 min")
             
             // Format and display the result in the selected units
             if useMgdlUnits {
