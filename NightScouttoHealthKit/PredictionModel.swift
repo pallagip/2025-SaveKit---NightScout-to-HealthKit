@@ -24,6 +24,10 @@ class Prediction {
     var trendWeight: Double = 0.0      // Weight given to observed trend
     var finalPredictedChange: Double = 0.0  // Final predicted change after weighting
     
+    // Actual blood glucose value from HealthKit (added for ML comparison)
+    var actualBG: Double = 0.0         // Actual blood glucose value from HealthKit (mmol/L)
+    var actualBGTimestamp: Date?       // When the actual reading was recorded
+    
     init(timestamp: Date, 
          predictionValue: Double, 
          usedMgdlUnits: Bool, 
@@ -34,7 +38,9 @@ class Prediction {
          observedTrend: Double = 0,
          modelWeight: Double = 0,
          trendWeight: Double = 0,
-         finalPredictedChange: Double = 0) {
+         finalPredictedChange: Double = 0,
+         actualBG: Double = 0,
+         actualBGTimestamp: Date? = nil) {
         
         self.timestamp = timestamp
         self.predictionValue = predictionValue
@@ -47,6 +53,8 @@ class Prediction {
         self.modelWeight = modelWeight
         self.trendWeight = trendWeight
         self.finalPredictedChange = finalPredictedChange
+        self.actualBG = actualBG
+        self.actualBGTimestamp = actualBGTimestamp
     }
     
     // Helper to get formatted prediction value in the appropriate units

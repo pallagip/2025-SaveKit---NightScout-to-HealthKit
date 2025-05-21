@@ -10,6 +10,7 @@ import BackgroundTasks
 import UIKit
 import CoreML
 import SwiftData
+import HealthKit
 
 struct ContentView: View {
     var body: some View {
@@ -385,6 +386,9 @@ struct SettingsView: View {
     @AppStorage("nightscoutBaseURL") private var nightscoutBaseURLString = ""
     @AppStorage("apiSecret")       private var apiSecret               = ""
     @AppStorage("apiToken")        private var apiToken                = ""
+    
+    // SwiftData context for working with predictions
+    @Environment(\.modelContext) private var modelContext
     // Next sync date (written when a sync is scheduled)
     @AppStorage("nextSyncDate")    private var nextSyncDate           = Date()
     // Blood glucose units preference
@@ -394,11 +398,13 @@ struct SettingsView: View {
     private enum Field { case url, secret, token }
     
     // For CSV export
-    @Environment(\.modelContext) private var modelContext
     @State private var showingExportSuccess = false
 
     // View model (no parameters → safe to initialize here)
     @StateObject private var viewModel = ContentViewModel()
+    
+    // Track UI state
+    @State private var isInitialized = false
 
     var body: some View {
         ScrollView {
@@ -492,6 +498,14 @@ struct SettingsView: View {
             .foregroundColor(.white)
             .cornerRadius(10)
             .disabled(viewModel.syncInProgress)
+            .onAppear {
+                if !isInitialized {
+                    Task { 
+                        await viewModel.initialize(with: modelContext)
+                        isInitialized = true
+                    }
+                }
+            }
 
             // Status
             if let result = viewModel.lastSyncResult {
@@ -536,6 +550,12 @@ struct SettingsView: View {
 class ContentViewModel: ObservableObject {
     @Published var syncInProgress = false
     @Published var lastSyncResult: String?
+    
+    // For prediction matching
+    private let predictionMatchingService = PredictionMatchingService()
+    
+    // SwiftData context for working with predictions
+    private var modelContext: ModelContext? = nil
 
 
     func handleManualSync() async throws {
@@ -544,16 +564,43 @@ class ContentViewModel: ObservableObject {
 
         // Get the count of new entries saved
         let savedCount = await SyncManager.shared.performSync(isBackground: false)
-        // Provide detailed feedback based on what was actually saved
-        if savedCount > 0 {
-            lastSyncResult = "Successfully saved \(savedCount) new readings to HealthKit"
+        
+        // After syncing Nightscout data to HealthKit, also match predictions with actual values
+        var matchedCount = 0
+        if let context = modelContext {
+            do {
+                // Match predictions with actual HealthKit values
+                matchedCount = try await predictionMatchingService.matchPredictionsWithActualValues(context: context)
+                print("✅ Matched \(matchedCount) predictions with actual HealthKit values")
+            } catch {
+                print("⚠️ Error matching predictions with HealthKit data: \(error)")
+            }
+        }
+        
+        // Provide detailed feedback based on what was actually saved and matched
+        if savedCount > 0 || matchedCount > 0 {
+            lastSyncResult = "Sync complete - Saved \(savedCount) readings to HealthKit, Updated \(matchedCount) predictions"
         } else {
-            lastSyncResult = "Sync complete - No new data to save"
+            lastSyncResult = "Sync complete - No new data to save or update"
         }
     }
 
     func triggerSync() async throws -> Int {
-        return await SyncManager.shared.performSync(isBackground: false)
+        // First sync Nightscout data to HealthKit
+        let savedCount = await SyncManager.shared.performSync(isBackground: false)
+        
+        // Then match predictions with actual values
+        if let context = modelContext {
+            do {
+                // Match predictions with actual HealthKit values
+                let matchedCount = try await predictionMatchingService.matchPredictionsWithActualValues(context: context)
+                print("✅ Matched \(matchedCount) predictions with actual HealthKit values")
+            } catch {
+                print("⚠️ Error matching predictions with HealthKit data: \(error)")
+            }
+        }
+        
+        return savedCount
     }
 
 
@@ -570,13 +617,33 @@ class ContentViewModel: ObservableObject {
         print("🔧 Saving settings – URL: \(url)")
         try await HealthKitManager().requestAuthorization()
         print("✅ HealthKit authorization successful")
+        
         // Trigger an immediate sync with the new settings
         let savedCount = await SyncManager.shared.performSync(isBackground: false)
-        // Update the result message based on what was saved
-        if savedCount > 0 {
-            lastSyncResult = "Settings saved and \(savedCount) new readings synced to HealthKit"
+        
+        // After syncing, match predictions with actual values
+        var matchedCount = 0
+        if let context = modelContext {
+            do {
+                // Match predictions with actual HealthKit values
+                matchedCount = try await predictionMatchingService.matchPredictionsWithActualValues(context: context)
+                print("✅ Matched \(matchedCount) predictions with actual HealthKit values")
+            } catch {
+                print("⚠️ Error matching predictions with HealthKit data: \(error)")
+            }
+        }
+        
+        // Update the result message based on what was saved and matched
+        if savedCount > 0 || matchedCount > 0 {
+            lastSyncResult = "Settings saved. Synced \(savedCount) readings and updated \(matchedCount) predictions."
         } else {
             lastSyncResult = "Settings saved. HealthKit is already up to date."
         }
+    }
+    
+    // Initialize with model context (called from the view)
+    @MainActor
+    func initialize(with context: ModelContext) async {
+        self.modelContext = context
     }
 }
