@@ -91,7 +91,8 @@ class NightscoutService {
         var components = URLComponents(url: baseURL.appendingPathComponent("api/v1/entries.json"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "find[date][$gte]", value: "\(millisSinceEpoch)"),
-            URLQueryItem(name: "sort$desc", value: "date")
+            URLQueryItem(name: "sort$desc", value: "date"),
+            URLQueryItem(name: "count", value: "1000")  // Increased from default (usually 10) to ensure we get all entries
         ]
         
         guard let url = components.url else {
