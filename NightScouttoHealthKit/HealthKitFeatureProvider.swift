@@ -87,35 +87,109 @@ final class HealthKitFeatureProvider: ObservableObject {
     }
     
     func buildWindow() async throws -> MLMultiArray {
-
-        let now   = Date()
-        let step  = 5.0 * 60        // 5 min in seconds
-        let bins  = stride(from: 7, through: 0, by: -1).map { now.addingTimeInterval(-Double($0) * step) }
-
-        // arrays we'll fill
-        var hr  = [Double]()
-        var bg  = [Double]()
-        var carbsDose = [Double]()
-        var bolusDose = [Double]()
-
-        // fetch each 5-min bin
-        for anchor in bins {
-            hr.append(try await latestValue(of: heartRate,
-                                            upTo: anchor,
-                                            unit: HKUnit(from: "count/min")))
-            bg.append(try await latestValue(of: glucose,
-                                            upTo: anchor,
-                                            unit: HKUnit(from: "mg/dL")))
-            carbsDose.append(try await latestValue(of: carbSamples,
-                                                   upTo: anchor,
-                                                   unit: HKUnit.gram()))
-            bolusDose.append(try await latestValue(of: bolusSamples,
-                                                   upTo: anchor,
-                                                   unit: HKUnit.internationalUnit(),
-                                                   deliveryReason: .bolus))
+        let now = Date()
+        let step = 5.0 * 60  // 5 min in seconds
+        
+        // Create regular 5-minute bins for recent data (last 35 minutes)
+        let recentBins = stride(from: 7, through: 0, by: -1).map { now.addingTimeInterval(-Double($0) * step) }
+        
+        // Create extended bins for insulin (4 hours) and carbs (3 hours)
+        let fourHoursInSeconds = 4 * 60 * 60.0
+        let threeHoursInSeconds = 3 * 60 * 60.0
+        
+        // Calculate start times for extended lookback periods
+        let insulinStartTime = now.addingTimeInterval(-fourHoursInSeconds)
+        let carbsStartTime = now.addingTimeInterval(-threeHoursInSeconds)
+        
+        // Arrays for regular 5-min bins
+        var hr = [Double]()
+        var bg = [Double]()
+        var recentCarbsDose = [Double]()
+        var recentBolusDose = [Double]()
+        
+        // Extended arrays for insulin and carbs history
+        var extendedBolusDose = [Double]()
+        var extendedCarbsDose = [Double]()
+        
+        // Fetch insulin doses from the last 4 hours at 15-minute intervals
+        // We use 15-minute intervals for extended lookback to balance detail and efficiency
+        let insulinBins = stride(from: insulinStartTime.timeIntervalSince1970, 
+                                 to: now.timeIntervalSince1970, 
+                                 by: 15 * 60).map { Date(timeIntervalSince1970: $0) }
+        
+        for anchor in insulinBins {
+            let bolus = try await latestValue(of: bolusSamples,
+                                             upTo: anchor,
+                                             unit: HKUnit.internationalUnit(),
+                                             deliveryReason: .bolus)
+            extendedBolusDose.append(bolus)
         }
-
-        // convert bolus + carbs to active / operative via e-decay (λ = 0.028 h-¹)
+        
+        // Fetch carb intake from the last 3 hours at 15-minute intervals
+        let carbsBins = stride(from: carbsStartTime.timeIntervalSince1970, 
+                               to: now.timeIntervalSince1970, 
+                               by: 15 * 60).map { Date(timeIntervalSince1970: $0) }
+        
+        for anchor in carbsBins {
+            let carbs = try await latestValue(of: carbSamples,
+                                             upTo: anchor,
+                                             unit: HKUnit.gram())
+            extendedCarbsDose.append(carbs)
+        }
+        
+        // Fetch each 5-min bin for regular data
+        for anchor in recentBins {
+            hr.append(try await latestValue(of: heartRate,
+                                          upTo: anchor,
+                                          unit: HKUnit(from: "count/min")))
+            bg.append(try await latestValue(of: glucose,
+                                          upTo: anchor,
+                                          unit: HKUnit(from: "mg/dL")))
+            
+            // Still collect recent carbs and insulin for the regular bins
+            recentCarbsDose.append(try await latestValue(of: carbSamples,
+                                                       upTo: anchor,
+                                                       unit: HKUnit.gram()))
+            recentBolusDose.append(try await latestValue(of: bolusSamples,
+                                                       upTo: anchor,
+                                                       unit: HKUnit.internationalUnit(),
+                                                       deliveryReason: .bolus))
+        }
+        
+        // Calculate active insulin with longer history
+        func calculateActiveInsulin(doses: [Double], λ: Double = 0.028) -> Double {
+            // Exponential decay model for insulin (λ = 0.028 h⁻¹)
+            var activeInsulin = 0.0
+            for (index, dose) in doses.enumerated() {
+                // Calculate time since dose in hours (15-minute intervals)
+                let timeInHours = Double(doses.count - 1 - index) * (15.0 / 60.0)
+                // Apply exponential decay
+                activeInsulin += dose * exp(-λ * timeInHours)
+            }
+            return activeInsulin
+        }
+        
+        // Calculate active carbs with longer history
+        func calculateActiveCarbs(doses: [Double], λ: Double = 0.028) -> Double {
+            // Similar exponential decay model for carbs
+            var activeCarbs = 0.0
+            for (index, dose) in doses.enumerated() {
+                // Calculate time since intake in hours (15-minute intervals)
+                let timeInHours = Double(doses.count - 1 - index) * (15.0 / 60.0)
+                // Apply exponential decay
+                activeCarbs += dose * exp(-λ * timeInHours)
+            }
+            return activeCarbs
+        }
+        
+        // Calculate total active insulin from extended history
+        let totalActiveInsulin = calculateActiveInsulin(doses: extendedBolusDose)
+        
+        // Calculate total active carbs from extended history
+        let totalActiveCarbs = calculateActiveCarbs(doses: extendedCarbsDose)
+        
+        // Combine recent data with extended history calculations
+        // Convert bolus + carbs to active / operative via e-decay for recent data
         func expDecay(_ doses: [Double], λ: Double = 0.028) -> [Double] {
             var out = [Double](repeating: 0, count: doses.count)
             out[0] = doses[0]
@@ -124,10 +198,25 @@ final class HealthKitFeatureProvider: ObservableObject {
             }
             return out
         }
-
-        let actIns  = expDecay(bolusDose)
-        let opCarbs = expDecay(carbsDose)
-
+        
+        // Process recent data
+        var actIns = expDecay(recentBolusDose)
+        var opCarbs = expDecay(recentCarbsDose)
+        
+        // Add the contribution from extended history to the recent data
+        // Add the extended insulin/carb activity to the first position
+        if !actIns.isEmpty {
+            actIns[0] += totalActiveInsulin
+        }
+        
+        if !opCarbs.isEmpty {
+            opCarbs[0] += totalActiveCarbs
+        }
+        
+        // Re-apply decay to propagate the extended history through the recent time bins
+        actIns = expDecay(actIns)
+        opCarbs = expDecay(opCarbs)
+        
         // ---- to MLMultiArray -------------------------------------------------
         let x = try MLMultiArray(shape: [1, 8, 4], dataType: .float32)
         var idx = 0
@@ -137,6 +226,11 @@ final class HealthKitFeatureProvider: ObservableObject {
             x[idx] = NSNumber(value: actIns[t]);     idx += 1
             x[idx] = NSNumber(value: opCarbs[t]);    idx += 1
         }
+        
+        print("🔄 Insulin considered from the last 4 hours, carbs from the last 3 hours")
+        print("💉 Total active insulin: \(String(format: "%.2f", totalActiveInsulin)) IU")
+        print("🍞 Total active carbs: \(String(format: "%.2f", totalActiveCarbs)) g")
+        
         return x
     }
 }
