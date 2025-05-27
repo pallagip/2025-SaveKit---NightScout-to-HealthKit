@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 @Model
-class Prediction {
+final class Prediction: @unchecked Sendable {
     // Core prediction data (original fields)
     var timestamp: Date
     var predictionValue: Double  // Always stored in mmol/L

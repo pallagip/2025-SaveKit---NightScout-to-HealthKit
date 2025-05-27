@@ -30,9 +30,8 @@ struct ContentView: View {
 
 // MARK: - Blood Glucose Prediction
 struct BGPredictionView: View {
-    @State private var scaler: SequenceMinMaxScaler?
+    @StateObject private var predictionService = BGPredictionService()
     @StateObject private var hk = HealthKitFeatureProvider()
-    @State private var model: MLModel?
     @State private var predictText = "—"
     @AppStorage("useMgdlUnits") private var useMgdlUnits = true
     @State private var lastGlucoseReading: Double = 0.0  // Track previous reading
@@ -54,8 +53,7 @@ struct BGPredictionView: View {
                 HStack {
                     Button("Predict") { Task { await predict() } }
                         .buttonStyle(.borderedProminent)
-                    Button("Personalize") { Task { await personalize() } }
-                        .buttonStyle(.bordered)
+                    // Removed personalize button as we're using the pre-trained model directly
                 }
             }
             .padding()
@@ -119,20 +117,8 @@ struct BGPredictionView: View {
 
     private func initializeApp() async {
         do {
-            // Initialize scaler
-            scaler = try SequenceMinMaxScaler()
-            
-            // Load ML model
-            guard let modelURL = Bundle.main.url(forResource: "BGPersonal",
-                                               withExtension: "mlmodelc") else {
-                throw NSError(domain: "ModelError",
-                            code: 1,
-                            userInfo: [NSLocalizedDescriptionKey:
-                                      "Could not find BGPersonal model"])
-            }
-            model = try MLModel(contentsOf: modelURL)
-            
-            // Request HealthKit authorization
+            // Request HealthKit authorization from both services
+            try await predictionService.requestHealthKitAuthorization()
             try await hk.requestAuth()
             
         } catch {
@@ -144,191 +130,27 @@ struct BGPredictionView: View {
     @MainActor
     private func predict() async {
         do {
-            guard let model = model else {
-                predictText = "No Model"
-                return
-            }
+            // Use the prediction service to get a prediction
+            let prediction = try await predictionService.createPredictionRecord(useMgdl: useMgdlUnits)
             
-            // Get health data
-            let x = try await hk.buildWindow()
+            // Get the current blood glucose value
+            let currentBG = prediction.currentBG  // Already in mmol/L
             
-            // Transform data if scaler exists
-            if let scaler = scaler {
-                scaler.transform(x)
-            }
-            
-            // Create MLFeatureValue safely
-            let featureValue = MLFeatureValue(multiArray: x)
-            
-            // Create model input with the correct feature name
-            let input = ["bidirectional_input": featureValue]
-            let inputProvider = try MLDictionaryFeatureProvider(dictionary: input)
-            
-            // Make prediction
-            let out = try await model.prediction(from: inputProvider)
-            
-            // Process result
-            guard let outputFeature = out.featureValue(for: "Identity"),
-                  let multiArray = outputFeature.multiArrayValue else {
-                throw NSError(domain: "PredictionError",
-                            code: 1,
-                            userInfo: [NSLocalizedDescriptionKey:
-                                      "Invalid model output"])
-            }
-            
-            // Get the raw prediction value from the model (clearly scaled between 0-1)
-            let scaledPrediction = multiArray[0].doubleValue
-            
-            // Get the current BG for context
-            let currentBG = try await hk.fetchLatestGlucoseValue() / 18.0  // Convert mg/dL to mmol/L
-            
-            // Detect the trend by comparing to the last reading
-            var bgTrend: Double = 0.0 // Default to neutral trend
-            
-            if lastGlucoseReading > 0 && lastReadingTimestamp != nil {
-                // Calculate the rate of change per minute
-                let timeDiff = Date().timeIntervalSince(lastReadingTimestamp!) / 60.0 // in minutes
-                
-                // Only calculate trend if enough time has passed (at least 1 minute)
-                // to avoid extreme values from tiny time differences
-                if timeDiff >= 1.0 {
-                    let bgDiff = currentBG - lastGlucoseReading
-                    let rateOfChange = bgDiff / timeDiff // mmol/L per minute
-                    
-                    // Apply a reasonable cap to rate of change (±0.3 mmol/L per minute)
-                    // This is already quite rapid for BG changes
-                    let cappedRateOfChange = min(0.3, max(-0.3, rateOfChange))
-                    
-                    // Extrapolate to predict 20 minutes ahead based on just the trend
-                    // but with a damping factor to be conservative in predictions
-                    let dampingFactor = 0.7 // reduce the impact of the trend
-                    bgTrend = cappedRateOfChange * 20.0 * dampingFactor
-                    
-                    print("BG trend: \(bgTrend > 0 ? "rising" : "falling") at \(abs(cappedRateOfChange)) mmol/L per minute")
-                } else {
-                    print("Too little time has passed for reliable trend calculation (\(timeDiff) minutes)")
-                }
-            } else {
-                print("First reading - no trend data available yet")
-            }
-            
-            // Update the last reading for next time
+            // Update our tracking for trend calculation next time
             lastGlucoseReading = currentBG
             lastReadingTimestamp = Date()
             
-            // Based on the debug output, the model seems to consistently predict values around 0.28,
-            // which appears to be inaccurate for predicting changes
-            
-            // Define reasonable bounds for blood glucose in mmol/L
-            let maxReasonableBG = 25.0  // Maximum reasonable BG 
-            let minReasonableBG = 2.0   // Minimum reasonable BG
-            
-            // Interpret raw model output, but now consider the detected trend
-            // 0.28 is very low on 0-1 scale, suggesting a drop - but this doesn't match reality when BG is rising
-            
-            // Create a weighted prediction that combines:
-            // 1. The model output (but with lower weight if it contradicts observed trend)
-            // 2. The observed trend (with higher weight)
-            
-            // If BG is relatively stable (trend is small), put less weight on both predictions
-            // and more weight on the current BG value
-            let isStable = abs(bgTrend) < 1.0 // Less than 1 mmol/L change predicted over 20 min
-            
-            // Raw model output seems to consistently predict a significant drop regardless of actual trend
-            // For a 0.28 value (what we're consistently seeing), the model is predicting a large drop
-            
-            // Normalize the model's prediction (0.28 is about -0.44 on a -1 to 1 scale)
-            let normalizedFactor = (scaledPrediction - 0.5) * 2 // Convert to -1 to +1 range
-            
-            // Determine reasonable change range (up to 4 mmol/L in 20 minutes) - more conservative
-            let maxChangeRange = 4.0
-            
-            // Calculate model's predicted change
-            let modelPredictedChange = normalizedFactor * maxChangeRange
-            
-            // For weighting, consider:
-            // 1. When BG is stable, trust neither model nor trend too much
-            // 2. When model contradicts trend, trust trend more for rising BG, model more for falling BG
-            // 3. When they agree, use a balanced approach
-            
-            let modelWeight: Double
-            let trendWeight: Double
-            
-            if isStable {
-                // When BG is stable, predict minimal change
-                modelWeight = 0.2
-                trendWeight = 0.3
-            } else if modelPredictedChange < 0 && bgTrend > 0 {
-                // Model predicts drop but trend shows rise - trust trend more
-                modelWeight = 0.2
-                trendWeight = 0.8
-            } else if modelPredictedChange < 0 && bgTrend < 0 {
-                // Both predict drop - balanced approach
-                modelWeight = 0.5
-                trendWeight = 0.5
-            } else {
-                // Other scenarios - balanced approach
-                modelWeight = 0.5
-                trendWeight = 0.5
-            }
-            
-            // Calculate the weighted change
-            let weightedChange: Double
-            if isStable {
-                // For stable BG, predict a very small change (regression to normal)
-                let targetBG = 7.0 // Normal BG target in mmol/L
-                let regressionFactor = 0.05 // Small factor for regression to mean
-                let naturalRegression = (targetBG - currentBG) * regressionFactor
-                
-                // Combine minimal model and trend influence with natural regression
-                weightedChange = (modelPredictedChange * modelWeight) + 
-                                 (bgTrend * trendWeight) + 
-                                 (naturalRegression * (1 - modelWeight - trendWeight))
-            } else {
-                // Regular weighted combination for changing BG
-                weightedChange = (modelPredictedChange * modelWeight) + (bgTrend * trendWeight)
-            }
-            
-            // Calculate the final predicted BG
-            let predictedBG = currentBG + weightedChange
-            
-            // Apply final reasonableness bounds
-            let finalPrediction = min(maxReasonableBG, max(minReasonableBG, predictedBG))
-            
-            // Enhanced logging with stability information
-            let stabilityStatus = isStable ? "STABLE" : (bgTrend > 0 ? "RISING" : "FALLING")
-            print("[BG PREDICTION]")
-            print("Current: \(String(format: "%.1f", currentBG)) mmol/L (\(stabilityStatus))")
-            print("Model output: \(scaledPrediction) → Change: \(String(format: "%.1f", modelPredictedChange)) mmol/L")
-            print("Observed trend: \(String(format: "%.1f", bgTrend)) mmol/L over 20 min")
-            print("Weights: Model=\(modelWeight), Trend=\(trendWeight)")
-            print("Final predicted change: \(String(format: "%.1f", weightedChange)) mmol/L")
-            print("Prediction: \(String(format: "%.1f", finalPrediction)) mmol/L in 20 min")
+            // Get the raw prediction value (already in appropriate units)
+            let predictedBG = prediction.predictionValue
             
             // Format and display the result in the selected units
             if useMgdlUnits {
-                predictText = String(format: "%.0f", finalPrediction * 18.0) // mg/dL
+                predictText = String(format: "%.0f", predictedBG * 18.0) // mg/dL
             } else {
-                predictText = String(format: "%.1f", finalPrediction) // mmol/L
+                predictText = String(format: "%.1f", predictedBG) // mmol/L
             }
             
-            // Save prediction to SwiftData with all metadata
-            // Always store the value in mmol/L internally for consistency
-            let prediction = Prediction(
-                timestamp: Date(),
-                predictionValue: finalPrediction,
-                usedMgdlUnits: useMgdlUnits,
-                currentBG: currentBG,
-                stabilityStatus: isStable ? "STABLE" : (bgTrend > 0 ? "RISING" : "FALLING"),
-                modelOutput: scaledPrediction,
-                modelPredictedChange: modelPredictedChange,
-                observedTrend: bgTrend,
-                modelWeight: modelWeight,
-                trendWeight: trendWeight,
-                finalPredictedChange: weightedChange
-            )
-            
-            // Save the prediction and ensure UI is updated
+            // Save the prediction to SwiftData
             modelContext.insert(prediction)
             
             // This try-catch block ensures we capture any persistence errors
@@ -337,47 +159,18 @@ struct BGPredictionView: View {
                 print("✅ Prediction saved successfully")
                 
                 // Force UI refresh by updating the refreshID
-                // This ensures the prediction list is updated immediately
-                await MainActor.run { 
-                    self.refreshID = UUID()
-                    print("UI refresh triggered")
-                }
+                self.refreshID = UUID()
+                print("UI refresh triggered")
             } catch {
                 print("❌ Error saving prediction: \(error)")
             }
-            
         } catch {
             predictText = "Err"
             print("❌ predict failed:", error)
         }
     }
 
-    @MainActor
-    private func personalize() async {
-        do {
-            // Get latest glucose value
-            let glucoseValue = try await hk.fetchLatestGlucoseValue()
-            
-            // Store data for model personalization
-            let timestamp = Date().timeIntervalSince1970
-            let personalizationData = ["timestamp": timestamp,
-                                    "glucoseValue": glucoseValue]
-            
-            // Save to UserDefaults
-            var existingData = UserDefaults.standard.array(
-                forKey: "personalizationData") as? [[String: Any]] ?? []
-            existingData.append(personalizationData)
-            UserDefaults.standard.set(existingData,
-                                    forKey: "personalizationData")
-            
-            // Update UI
-            predictText = "✔︎ Data Collected"
-            
-        } catch {
-            predictText = "Tune Err"
-            print("❌ personalize failed:", error)
-        }
-    }
+    // Personalization function removed as we're using the pre-trained model directly
 }
 
 // MARK: - Settings & Nightscout Sync
@@ -519,22 +312,18 @@ struct SettingsView: View {
             Button {
                 // Use Task to handle async operation
                 Task {
-                    do {
-                        // Show activity indicator or feedback while running
-                        viewModel.syncInProgress = true
-                        
-                        // Call the async export function
-                        if let fileURL = await CSVExportManager.shared.exportPredictions(from: modelContext) {
-                            // Get the root view controller
-                            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                               let rootViewController = windowScene.windows.first?.rootViewController {
-                                
-                                // Share the CSV file with actual values included
-                                CSVExportManager.shared.shareCSV(from: fileURL, presenter: rootViewController)
-                            }
+                    // Show activity indicator or feedback while running
+                    viewModel.syncInProgress = true
+                    
+                    // Call the async export function
+                    if let fileURL = await CSVExportManager.shared.exportPredictions(from: modelContext) {
+                        // Get the root view controller
+                        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                           let rootViewController = windowScene.windows.first?.rootViewController {
+                            
+                            // Share the CSV file with actual values included
+                            CSVExportManager.shared.shareCSV(from: fileURL, presenter: rootViewController)
                         }
-                    } catch {
-                        print("❌ Error exporting predictions: \(error)")
                     }
                     
                     // Hide activity indicator when done
