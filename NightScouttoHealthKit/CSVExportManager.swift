@@ -17,10 +17,9 @@ class CSVExportManager {
             let descriptor = FetchDescriptor<Prediction>(sortBy: [SortDescriptor(\.timestamp, order: .reverse)])
             let predictions = try modelContext.fetch(descriptor)
             
-            // Create CSV content with all metadata fields - Always use mg/dL for exports
+            // Create CSV content with simplified fields - Always use mg/dL for exports
+            // Removed the requested columns from CSV export
             var csvContent = "Timestamp,Prediction Value (mg/dL),Current BG (mg/dL),Stability Status," +
-                            "Model Output (0-1),Model Predicted Change (mg/dL),Observed Trend (mg/dL)," +
-                            "Model Weight,Trend Weight,Final Predicted Change (mg/dL)," +
                             "Actual BG (mg/dL),Actual BG Timestamp\n"
             
             for prediction in predictions {
@@ -32,26 +31,12 @@ class CSVExportManager {
                 // Convert all BG values to mg/dL for consistency
                 let currentBGInMgdl = String(format: "%.0f", prediction.currentBG * 18.0)
                 
-                // Format all metadata with consistent decimal places
-                let modelOutput = String(format: "%.3f", prediction.modelOutput)
-                
-                // Convert all change/trend values to mg/dL
-                let modelPredictedChangeInMgdl = String(format: "%.0f", prediction.modelPredictedChange * 18.0)
-                let observedTrendInMgdl = String(format: "%.0f", prediction.observedTrend * 18.0)
-                let finalPredictedChangeInMgdl = String(format: "%.0f", prediction.finalPredictedChange * 18.0)
-                
-                // Weight values (unchanged)
-                let modelWeight = String(format: "%.2f", prediction.modelWeight)
-                let trendWeight = String(format: "%.2f", prediction.trendWeight)
-                
                 // Format actual BG data (convert to mg/dL)
                 let actualBGInMgdl = String(format: "%.0f", prediction.actualBG * 18.0)
                 let actualBGTimestamp = prediction.actualBGTimestamp?.ISO8601Format() ?? ""
                 
-                // Append row with all values in mg/dL
+                // Append row with simplified values in mg/dL
                 csvContent.append("\(timestamp),\(predictionValue),\(currentBGInMgdl),\(prediction.stabilityStatus)," +
-                                 "\(modelOutput),\(modelPredictedChangeInMgdl),\(observedTrendInMgdl)," +
-                                 "\(modelWeight),\(trendWeight),\(finalPredictedChangeInMgdl)," +
                                  "\(actualBGInMgdl),\(actualBGTimestamp)\n")
             }
             
