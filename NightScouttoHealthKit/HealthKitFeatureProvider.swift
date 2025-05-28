@@ -233,4 +233,137 @@ final class HealthKitFeatureProvider: ObservableObject {
         
         return x
     }
+    
+    /// Fetch recent glucose values, ordered from most recent to oldest
+    /// - Parameter limit: The maximum number of readings to fetch
+    /// - Returns: Array of glucose values in mg/dL
+    func fetchRecentGlucoseValues(limit: Int) async throws -> [Double] {
+        let now = Date()
+        let startDate = Calendar.current.date(byAdding: .hour, value: -12, to: now) ?? now.addingTimeInterval(-12 * 3600)
+        
+        let predicate = HKQuery.predicateForSamples(withStart: startDate,
+                                                    end: now,
+                                                    options: .strictEndDate)
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: glucose,
+                                      predicate: predicate,
+                                      limit: limit,
+                                      sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate,
+                                                                         ascending: false)]) { (_, samples, error) in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                
+                guard let samples = samples as? [HKQuantitySample], !samples.isEmpty else {
+                    continuation.resume(returning: [])
+                    return
+                }
+                
+                let values = samples.map { $0.quantity.doubleValue(for: HKUnit(from: "mg/dL")) }
+                continuation.resume(returning: values)
+            }
+            store.execute(query)
+        }
+    }
+    
+    /// Represents an insulin dose with timestamp and units
+    struct InsulinDose {
+        let timestamp: Date
+        let units: Double
+    }
+    
+    /// Fetch recent insulin doses
+    /// - Parameter hoursBack: Number of hours to look back
+    /// - Returns: Array of insulin doses with timestamps
+    func fetchRecentInsulinDoses(hoursBack: Double) async throws -> [InsulinDose] {
+        let now = Date()
+        let startDate = now.addingTimeInterval(-hoursBack * 3600)
+        
+        let predicate = HKQuery.predicateForSamples(withStart: startDate,
+                                                   end: now,
+                                                   options: .strictEndDate)
+        
+        // Add predicate for bolus insulin only
+        let reasonPred = HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeyInsulinDeliveryReason,
+                                                    operatorType: .equalTo,
+                                                    value: HKInsulinDeliveryReason.bolus.rawValue)
+        
+        let finalPredicate = NSCompoundPredicate(andPredicateWithSubpredicates: [predicate, reasonPred])
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: bolusSamples,
+                                      predicate: finalPredicate,
+                                      limit: Int(hoursBack * 4), // Average 1 dose per 15 minutes max
+                                      sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate,
+                                                                         ascending: false)]) { (_, samples, error) in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                
+                guard let samples = samples as? [HKQuantitySample], !samples.isEmpty else {
+                    continuation.resume(returning: [])
+                    return
+                }
+                
+                let doses = samples.map { sample in
+                    InsulinDose(
+                        timestamp: sample.endDate,
+                        units: sample.quantity.doubleValue(for: HKUnit.internationalUnit())
+                    )
+                }
+                
+                continuation.resume(returning: doses)
+            }
+            store.execute(query)
+        }
+    }
+    
+    /// Represents a carb intake with timestamp and grams
+    struct CarbIntake {
+        let timestamp: Date
+        let grams: Double
+    }
+    
+    /// Fetch recent carbohydrate intake
+    /// - Parameter hoursBack: Number of hours to look back
+    /// - Returns: Array of carb intake with timestamps
+    func fetchRecentCarbIntake(hoursBack: Double) async throws -> [CarbIntake] {
+        let now = Date()
+        let startDate = now.addingTimeInterval(-hoursBack * 3600)
+        
+        let predicate = HKQuery.predicateForSamples(withStart: startDate,
+                                                   end: now,
+                                                   options: .strictEndDate)
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: carbSamples,
+                                      predicate: predicate,
+                                      limit: Int(hoursBack * 4), // Average 1 entry per 15 minutes max
+                                      sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate,
+                                                                         ascending: false)]) { (_, samples, error) in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                
+                guard let samples = samples as? [HKQuantitySample], !samples.isEmpty else {
+                    continuation.resume(returning: [])
+                    return
+                }
+                
+                let intakes = samples.map { sample in
+                    CarbIntake(
+                        timestamp: sample.endDate,
+                        grams: sample.quantity.doubleValue(for: HKUnit.gram())
+                    )
+                }
+                
+                continuation.resume(returning: intakes)
+            }
+            store.execute(query)
+        }
+    }
 }

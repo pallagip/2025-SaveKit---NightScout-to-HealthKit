@@ -140,15 +140,20 @@ struct BGPredictionView: View {
             lastGlucoseReading = currentBG
             lastReadingTimestamp = Date()
             
-            // Get the raw prediction value (already in appropriate units)
+            // Get the prediction value (already in the correct units based on useMgdl parameter)
             let predictedBG = prediction.predictionValue
             
-            // Format and display the result in the selected units
+            // Format and display the result (no additional conversion needed)
             if useMgdlUnits {
-                predictText = String(format: "%.0f", predictedBG * 18.0) // mg/dL
+                // Already in mg/dL from the prediction service
+                predictText = String(format: "%.0f", predictedBG)
             } else {
-                predictText = String(format: "%.1f", predictedBG) // mmol/L
+                // Already in mmol/L from the prediction service
+                predictText = String(format: "%.1f", predictedBG)
             }
+            
+            // Log for debugging
+            print("📊 Displaying prediction: \(predictText) \(useMgdlUnits ? "mg/dL" : "mmol/L")")
             
             // Save the prediction to SwiftData
             modelContext.insert(prediction)
