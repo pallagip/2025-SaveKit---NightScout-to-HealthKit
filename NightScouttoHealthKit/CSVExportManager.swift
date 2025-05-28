@@ -31,9 +31,9 @@ class CSVExportManager {
                 // Convert all BG values to mg/dL for consistency
                 let currentBGInMgdl = String(format: "%.0f", prediction.currentBG * 18.0)
                 
-                // Format actual BG data (convert to mg/dL)
-                let actualBGInMgdl = String(format: "%.0f", prediction.actualBG * 18.0)
-                let actualBGTimestamp = prediction.actualBGTimestamp?.ISO8601Format() ?? ""
+                // Format actual BG data (convert to mg/dL) or display 'NA' if missing
+                let actualBGInMgdl = prediction.actualBG > 0 ? String(format: "%.0f", prediction.actualBG * 18.0) : "NA"
+                let actualBGTimestamp = prediction.actualBGTimestamp?.ISO8601Format() ?? "NA"
                 
                 // Append row with simplified values in mg/dL
                 csvContent.append("\(timestamp),\(predictionValue),\(currentBGInMgdl),\(prediction.stabilityStatus)," +
@@ -57,11 +57,16 @@ class CSVExportManager {
     private func matchActualValuesBeforeExport(modelContext: ModelContext) async throws {
         print("🔄 Preparing CSV export - matching predictions with actual values first...")
         
-        // Use the matching service to update all predictions with actual values
-        let matchingService = PredictionMatchingService()
-        let updatedCount = try await matchingService.matchPredictionsWithActualValues(context: modelContext, days: 7)
+        // Instead of clearing actual BG values which causes memory issues,
+        // we'll use a completely new approach to get proper matching
         
-        print("✅ Pre-export matching complete - updated \(updatedCount) predictions with actual values")
+        // Create a special matching service just for the export process
+        let exportMatchingService = ExportPredictionMatchingService()
+        
+        // This will find valid future readings without clearing existing values
+        let updatedCount = try await exportMatchingService.matchPredictionsForExport(context: modelContext)
+        
+        print("✅ Export matching complete - found \(updatedCount) valid future readings for predictions")
     }
     
     func shareCSV(from url: URL, presenter: UIViewController) {

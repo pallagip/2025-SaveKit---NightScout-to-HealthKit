@@ -78,14 +78,24 @@ class PredictionMatchingService {
                 continue
             }
             
-            // The target time is approximately 20 minutes after the prediction timestamp
+            // FIXED: The target time is EXACTLY 20 minutes after the prediction timestamp
             // This is when we expect to have the actual glucose reading to compare against
-            let targetTime = prediction.timestamp.addingTimeInterval(20 * 60) // 20 minutes later
+            let targetTime = prediction.timestamp.addingTimeInterval(20 * 60) // Exactly 20 minutes later
             
             print("🔍 Looking for match near \(targetTime.formatted())") // for debugging
             
-            // Use an extended tolerance window (60 minutes instead of the default 30)
-            if let (sample, value) = healthKitManager.findClosestGlucoseReading(to: prediction.timestamp, in: samples, tolerance: 3600) {
+            // Filter samples to ONLY include those that occurred AFTER the prediction time
+            // This ensures we don't match with readings from before the prediction was made
+            let futureSamples = samples.filter { $0.startDate > prediction.timestamp }
+            
+            if futureSamples.isEmpty {
+                print("⚠️ No future samples available for prediction at \(prediction.formattedDate)")
+                continue
+            }
+            
+            // First try with a very tight tolerance window (5 minutes)
+            // If we find a match within 5 minutes of the target time, use that
+            if let (sample, value) = healthKitManager.findExactGlucoseReading(targetTime: targetTime, in: futureSamples, toleranceMinutes: 5) {
                 // Calculate time difference in minutes for logging
                 let predictionTime = prediction.timestamp
                 let actualTime = sample.startDate
@@ -102,7 +112,26 @@ class PredictionMatchingService {
                 prediction.actualBGTimestamp = sample.startDate
                 updatedCount += 1
             } else {
-                print("⚠️ No match found for prediction at \(prediction.formattedDate)")
+                // FALLBACK: If no exact match, try with a wider tolerance window (15 minutes)
+                if let (sample, value) = healthKitManager.findExactGlucoseReading(targetTime: targetTime, in: futureSamples, toleranceMinutes: 15) {
+                    // Calculate time difference in minutes for logging
+                    let predictionTime = prediction.timestamp
+                    let actualTime = sample.startDate
+                    let timeDifferenceMinutes = abs(actualTime.timeIntervalSince(predictionTime.addingTimeInterval(20 * 60))) / 60
+                    
+                    print("🔶 Found fallback match for prediction at \(prediction.formattedDate):")
+                    print("   → Prediction time: \(predictionTime.formatted())")
+                    print("   → Actual reading time: \(actualTime.formatted())")
+                    print("   → Actual BG: \(String(format: "%.1f", value)) mmol/L")
+                    print("   → Time difference: \(String(format: "%.1f", timeDifferenceMinutes)) minutes from expected")
+                    
+                    // Update the prediction
+                    prediction.actualBG = value
+                    prediction.actualBGTimestamp = sample.startDate
+                    updatedCount += 1
+                } else {
+                    print("⚠️ No match found for prediction at \(prediction.formattedDate)")
+                }
             }
         }
         

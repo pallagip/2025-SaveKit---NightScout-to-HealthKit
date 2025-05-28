@@ -238,16 +238,53 @@ class HealthKitManager {
         }
     }
     
+    /// Finds a glucose reading exactly at the specified target time within a tolerance window
+    /// - Parameters:
+    ///   - targetTime: The exact target timestamp to match
+    ///   - samples: Array of HKQuantitySamples to search within
+    ///   - toleranceMinutes: Maximum time difference in minutes (default 5 minutes)
+    /// - Returns: The closest matching sample and its value in mmol/L, or nil if none found within tolerance
+    func findExactGlucoseReading(targetTime: Date, in samples: [HKQuantitySample], toleranceMinutes: Double = 5.0) -> (sample: HKQuantitySample, value: Double)? {
+        // Convert tolerance to seconds
+        let toleranceSeconds = toleranceMinutes * 60
+        
+        // Find the closest sample by time difference
+        var closestSample: HKQuantitySample? = nil
+        var minTimeDifference = Double.infinity
+        
+        for sample in samples {
+            let timeDifference = abs(sample.startDate.timeIntervalSince(targetTime))
+            
+            // Only consider samples within the tolerance window
+            if timeDifference <= toleranceSeconds && timeDifference < minTimeDifference {
+                minTimeDifference = timeDifference
+                closestSample = sample
+            }
+        }
+        
+        // If we found a matching sample, return it along with its value in mmol/L
+        if let sample = closestSample {
+            let unit = HKUnit(from: "mg/dL")
+            let valueInMgdl = sample.quantity.doubleValue(for: unit)
+            let valueInMmol = valueInMgdl / 18.0 // Convert to mmol/L
+            
+            return (sample, valueInMmol)
+        }
+        
+        return nil
+    }
+    
     /// Finds the closest glucose reading to a specific timestamp within a given tolerance
     /// - Parameters:
     ///   - timestamp: The target timestamp to match
     ///   - samples: Array of HKQuantitySamples to search within
+    ///   - timeframeMinutes: The expected timeframe in minutes after the prediction when actual BG should occur (default 20 minutes)
     ///   - tolerance: Maximum time difference in seconds (default 30 minutes)
     /// - Returns: The closest matching sample and its value in mmol/L, or nil if none found within tolerance
-    func findClosestGlucoseReading(to timestamp: Date, in samples: [HKQuantitySample], tolerance: TimeInterval = 1800) -> (sample: HKQuantitySample, value: Double)? {
-        // The target time is approximately 20 minutes after the prediction timestamp
+    func findClosestGlucoseReading(to timestamp: Date, in samples: [HKQuantitySample], timeframeMinutes: Double = 20.0, tolerance: TimeInterval = 1800) -> (sample: HKQuantitySample, value: Double)? {
+        // The target time is EXACTLY 20 minutes after the prediction timestamp
         // This is when we expect to have the actual blood glucose value to compare against the prediction
-        let targetTime = timestamp.addingTimeInterval(20 * 60) // 20 minutes later
+        let targetTime = timestamp.addingTimeInterval(20 * 60) // Exactly 20 minutes later
         
         // Find the closest sample by time difference
         var closestSample: HKQuantitySample? = nil
