@@ -77,7 +77,7 @@ struct BGPredictionView: View {
                         Text("Date & Time")
                             .fontWeight(.medium)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        Text("Value")
+                        Text(useMgdlUnits ? "Value (mg/dL)" : "Value (mmol/L)")
                             .fontWeight(.medium)
                             .frame(width: 80, alignment: .trailing)
                     }
@@ -91,7 +91,11 @@ struct BGPredictionView: View {
                                 HStack {
                                     Text(prediction.formattedDate)
                                         .frame(maxWidth: .infinity, alignment: .leading)
-                                    Text(prediction.formattedValue)
+                                    
+                                    // Display value in currently selected units
+                                    Text(useMgdlUnits ? 
+                                         String(format: "%.0f", prediction.predictionValueInMgdl) : 
+                                         String(format: "%.1f", prediction.predictionValueInMmol))
                                         .frame(width: 80, alignment: .trailing)
                                 }
                                 .padding(.vertical, 4)

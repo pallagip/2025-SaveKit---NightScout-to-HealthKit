@@ -17,36 +17,42 @@ class CSVExportManager {
             let descriptor = FetchDescriptor<Prediction>(sortBy: [SortDescriptor(\.timestamp, order: .reverse)])
             let predictions = try modelContext.fetch(descriptor)
             
-            // Create CSV content with all metadata fields
-            var csvContent = "Timestamp,Prediction Value,Units,Current BG (mmol/L),Stability Status," +
-                            "Model Output (0-1),Model Predicted Change (mmol/L),Observed Trend (mmol/L)," +
-                            "Model Weight,Trend Weight,Final Predicted Change (mmol/L)," +
-                            "Actual BG (mmol/L),Actual BG Timestamp\n"
+            // Create CSV content with all metadata fields - Always use mg/dL for exports
+            var csvContent = "Timestamp,Prediction Value (mg/dL),Current BG (mg/dL),Stability Status," +
+                            "Model Output (0-1),Model Predicted Change (mg/dL),Observed Trend (mg/dL)," +
+                            "Model Weight,Trend Weight,Final Predicted Change (mg/dL)," +
+                            "Actual BG (mg/dL),Actual BG Timestamp\n"
             
             for prediction in predictions {
                 let timestamp = prediction.timestamp.ISO8601Format()
-                let value = prediction.usedMgdlUnits ? 
-                    String(format: "%.0f", prediction.predictionValue * 18.0) : 
-                    String(format: "%.1f", prediction.predictionValue)
-                let units = prediction.usedMgdlUnits ? "mg/dL" : "mmol/L"
+                
+                // Always convert to mg/dL for CSV export using the helper method
+                let predictionValue = String(format: "%.0f", prediction.predictionValueInMgdl)
+                
+                // Convert all BG values to mg/dL for consistency
+                let currentBGInMgdl = String(format: "%.0f", prediction.currentBG * 18.0)
                 
                 // Format all metadata with consistent decimal places
-                let currentBG = String(format: "%.1f", prediction.currentBG)
                 let modelOutput = String(format: "%.3f", prediction.modelOutput)
-                let modelPredictedChange = String(format: "%.1f", prediction.modelPredictedChange)
-                let observedTrend = String(format: "%.1f", prediction.observedTrend)
+                
+                // Convert all change/trend values to mg/dL
+                let modelPredictedChangeInMgdl = String(format: "%.0f", prediction.modelPredictedChange * 18.0)
+                let observedTrendInMgdl = String(format: "%.0f", prediction.observedTrend * 18.0)
+                let finalPredictedChangeInMgdl = String(format: "%.0f", prediction.finalPredictedChange * 18.0)
+                
+                // Weight values (unchanged)
                 let modelWeight = String(format: "%.2f", prediction.modelWeight)
                 let trendWeight = String(format: "%.2f", prediction.trendWeight)
-                let finalPredictedChange = String(format: "%.1f", prediction.finalPredictedChange)
                 
-                // Format actual BG data
-                let actualBG = String(format: "%.1f", prediction.actualBG)
+                // Format actual BG data (convert to mg/dL)
+                let actualBGInMgdl = String(format: "%.0f", prediction.actualBG * 18.0)
                 let actualBGTimestamp = prediction.actualBGTimestamp?.ISO8601Format() ?? ""
                 
-                csvContent.append("\(timestamp),\(value),\(units),\(currentBG),\(prediction.stabilityStatus)," +
-                                 "\(modelOutput),\(modelPredictedChange),\(observedTrend)," +
-                                 "\(modelWeight),\(trendWeight),\(finalPredictedChange)," +
-                                 "\(actualBG),\(actualBGTimestamp)\n")
+                // Append row with all values in mg/dL
+                csvContent.append("\(timestamp),\(predictionValue),\(currentBGInMgdl),\(prediction.stabilityStatus)," +
+                                 "\(modelOutput),\(modelPredictedChangeInMgdl),\(observedTrendInMgdl)," +
+                                 "\(modelWeight),\(trendWeight),\(finalPredictedChangeInMgdl)," +
+                                 "\(actualBGInMgdl),\(actualBGTimestamp)\n")
             }
             
             // Save to temporary file

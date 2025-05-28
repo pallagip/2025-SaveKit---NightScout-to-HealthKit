@@ -59,11 +59,23 @@ final class Prediction: @unchecked Sendable {
     
     // Helper to get formatted prediction value in the appropriate units
     var formattedValue: String {
+        // predictionValue is already stored in the correct units (mg/dL or mmol/L)
+        // Format accordingly - no conversion needed
         if usedMgdlUnits {
-            return String(format: "%.0f", predictionValue * 18.0)
+            return String(format: "%.0f", predictionValue)
         } else {
             return String(format: "%.1f", predictionValue)
         }
+    }
+    
+    // Helper to get the prediction value in mg/dL regardless of how it's stored
+    var predictionValueInMgdl: Double {
+        return usedMgdlUnits ? predictionValue : (predictionValue * 18.0)
+    }
+    
+    // Helper to get the prediction value in mmol/L regardless of how it's stored
+    var predictionValueInMmol: Double {
+        return usedMgdlUnits ? (predictionValue / 18.0) : predictionValue
     }
     
     // Helper to get units as string
