@@ -1,5 +1,7 @@
 import Foundation
 import SwiftData
+import CoreML
+import Accelerate
 
 @Model
 final class Prediction: @unchecked Sendable {
@@ -89,5 +91,86 @@ final class Prediction: @unchecked Sendable {
         formatter.dateStyle = .short
         formatter.timeStyle = .medium
         return formatter.string(from: timestamp)
+    }
+}
+
+final class BGTCNService {
+    static let shared = BGTCNService()
+
+    private let model: rangeupto1_tcn  // auto‑generated Core ML class
+    private let mean: [Float]
+    private let std: [Float]
+
+    private init() {
+        // Load compiled model
+        guard let m = try? rangeupto1_tcn(configuration: MLModelConfiguration()) else {
+            fatalError("❌ Could not load rangeupto1_tcn.mlpackage")
+        }
+        self.model = m
+        
+        // Use default scaling values for now (can be updated when metadata format is confirmed)
+        self.mean = [0.0, 0.0, 0.0, 0.0]
+        self.std  = [1.0, 1.0, 1.0, 1.0]
+        precondition(mean.count == 4 && std.count == 4, "Scaler length mismatch")
+    }
+
+    /// Main entry – pass a raw 24×4 window (Float32, shape (24,4), row‑major).
+    func predict(window raw: MLMultiArray,
+                 currentBG: Double,
+                 usedMgdl: Bool) throws -> Prediction {
+        // 1. Copy & scale in‑place (raw is (24,4) or (1,24,4))
+        let shape = raw.shape.map { $0.intValue }
+        guard shape.suffix(2) == [24, 4] else {
+            throw NSError(domain: "BGTCN", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey : "Expected (1,24,4) or (24,4) array"])
+        }
+        let ptr = UnsafeMutablePointer<Float32>(OpaquePointer(raw.dataPointer))
+        let strideT = 4
+        for f in 0..<4 {
+            let m = mean[f], s = std[f]
+            var idx = f
+            for _ in 0..<24 {
+                ptr[idx] = (ptr[idx] - m) / s
+                idx += strideT
+            }
+        }
+        // 2. Run prediction
+        let input = rangeupto1_tcnInput(input_1: raw)
+        let out   = try model.prediction(input: input)
+        // Extract the first (and likely only) output value using reflection
+        let bg20  = extractOutputValue(from: out)
+        // 3. Build data object for SwiftData
+        return Prediction(timestamp: Date(),
+                          predictionValue: bg20,
+                          usedMgdlUnits: usedMgdl,
+                          currentBG: currentBG,
+                          stabilityStatus: "",           // set by caller
+                          modelOutput: bg20,
+                          modelPredictedChange: bg20 - currentBG,
+                          observedTrend: 0)
+    }
+    
+    /// Extract the output value from the model prediction using reflection
+    private func extractOutputValue(from prediction: rangeupto1_tcnOutput) -> Double {
+        let mirror = Mirror(reflecting: prediction)
+        var outputValue: Double = 0
+        
+        for child in mirror.children {
+            if let value = child.value as? MLMultiArray {
+                // Get the first value from the MLMultiArray
+                if value.count > 0 {
+                    outputValue = Double(value[0].doubleValue)
+                    break
+                }
+            } else if let value = child.value as? Double {
+                outputValue = value
+                break
+            } else if let value = child.value as? Float {
+                outputValue = Double(value)
+                break
+            }
+        }
+        
+        return outputValue
     }
 }

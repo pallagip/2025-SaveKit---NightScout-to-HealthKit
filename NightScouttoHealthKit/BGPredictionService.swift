@@ -9,8 +9,8 @@ import Foundation
 import CoreML
 import Combine
 
-/// A service that handles blood glucose predictions using a pre-trained BGPersonal model
-/// Model architecture: GRU + Attention mechanism + Dense layers
+/// A service that handles blood glucose predictions using a pre-trained BGPersonal_BiLSTM model
+/// Model architecture: Bidirectional LSTM + Dense layers
 @MainActor
 class BGPredictionService: ObservableObject {
     private let healthKitFeatureProvider = HealthKitFeatureProvider()
@@ -35,7 +35,7 @@ class BGPredictionService: ObservableObject {
     // Cache timeout in minutes
     private let cacheTimeoutMinutes: Double = 5
     
-    /// Predict blood glucose using the pre-trained BGPersonal model and dynamic factors
+    /// Predict blood glucose using the pre-trained BGPersonal_BiLSTM model and dynamic factors
     /// - Returns: A tuple containing the predicted blood glucose value and timestamp
     @MainActor
     func predictBloodGlucose() async throws -> (value: Double, timestamp: Date) {
@@ -72,14 +72,15 @@ class BGPredictionService: ObservableObject {
                 timeOfDayFactor: timeOfDayFactor
             )
             
-            // Use the pre-trained BGPersonal model for prediction
-            let model = try BGPersonal()
+            // Use BGTCNService for proper model prediction with scaling
+            let predictionResult = try BGTCNService.shared.predict(
+                window: inputTensor,
+                currentBG: currentGlucose,
+                usedMgdl: true
+            )
             
-            // Create prediction with the correct input parameter name
-            let prediction = try model.prediction(input_layer_1: inputTensor)
-            
-            // Extract the prediction value from the model output
-            let outputValue = extractOutputValue(from: prediction)
+            // Get the raw prediction value
+            let outputValue = predictionResult.modelOutput
             
             // Calculate the scaled and adjusted prediction
             let scaledPrediction = calculateFinalPrediction(
@@ -120,53 +121,45 @@ class BGPredictionService: ObservableObject {
         momentum: Double,
         timeOfDayFactor: Double
     ) throws -> MLMultiArray {
-        // Create the input tensor with the correct shape
-        let inputTensor = try MLMultiArray(shape: [1, 24, 71], dataType: .float32)
+        // Create the input tensor with shape [1, 24, 4] to match rangeupto1_tcn model
+        let inputTensor = try MLMultiArray(shape: [1, 24, 4], dataType: .float32)
         
-        // Initially zero-initialize the array
-        for i in 0..<24*71 {
+        // Initialize all values to 0
+        for i in 0..<(24 * 4) {
             inputTensor[i] = 0.0
         }
         
-        // Fill in key features at specific positions
-        // Position 0: Current glucose value
-        inputTensor[0] = NSNumber(value: Float(currentGlucose))
+        // Calculate simple glucose trend from recent readings
+        let glucoseTrend = recentReadings.count >= 2 ? 
+            (recentReadings[0] - recentReadings[1]) : 0.0
         
-        // Add recent glucose readings (for trend analysis)
-        for (index, reading) in recentReadings.enumerated() {
-            if index < 10 { // Only use up to 10 recent readings
-                inputTensor[index + 1] = NSNumber(value: Float(reading))
-            }
+        // Fill the tensor with 4 features for each of the 24 time steps
+        // For simplicity, we'll repeat the same 4 values for each time step
+        // Feature 0: Current glucose (normalized)
+        // Feature 1: IOB (Insulin on Board)
+        // Feature 2: COB (Carbs on Board) 
+        // Feature 3: Glucose momentum/trend
+        
+        for timeStep in 0..<24 {
+            let baseIndex = timeStep * 4
+            
+            // Feature 0: Current glucose value (normalized to 0-1 range, assuming 50-400 mg/dL range)
+            inputTensor[baseIndex + 0] = NSNumber(value: Float((currentGlucose - 50.0) / 350.0))
+            
+            // Feature 1: IOB
+            inputTensor[baseIndex + 1] = NSNumber(value: Float(iob))
+            
+            // Feature 2: COB
+            inputTensor[baseIndex + 2] = NSNumber(value: Float(cob))
+            
+            // Feature 3: Glucose trend/momentum
+            inputTensor[baseIndex + 3] = NSNumber(value: Float(glucoseTrend))
         }
-        
-        // Add IOB, COB, momentum, and time factor at specific positions
-        inputTensor[11] = NSNumber(value: Float(iob))
-        inputTensor[12] = NSNumber(value: Float(cob))
-        inputTensor[13] = NSNumber(value: Float(momentum))
-        inputTensor[14] = NSNumber(value: Float(timeOfDayFactor))
         
         return inputTensor
     }
     
-    /// Extract the output value from the model prediction
-    private func extractOutputValue(from prediction: BGPersonalOutput) -> Double {
-        let mirror = Mirror(reflecting: prediction)
-        var outputValue: Double = 0
-        
-        for (_, value) in mirror.children {
-            // Attempt to find the output value
-            if let multiArray = value as? MLMultiArray {
-                outputValue = multiArray[0].doubleValue
-                break
-            } else if let doubleValue = value as? Double {
-                outputValue = doubleValue
-                break
-            }
-        }
-        
-        return outputValue
-    }
-    
+
     /// Calculate the final prediction based on all factors
     private func calculateFinalPrediction(
         rawPrediction: Double,
