@@ -366,4 +366,43 @@ final class HealthKitFeatureProvider: ObservableObject {
             store.execute(query)
         }
     }
+    
+    /// Fetch the most recent heart rate value (in beats per minute)
+    /// - Parameter minutesBack: Number of minutes to look back (default 30 minutes)
+    /// - Returns: Heart rate in beats per minute, or 70.0 as default if no recent data
+    func fetchLatestHeartRate(minutesBack: Double = 30.0) async throws -> Double {
+        let now = Date()
+        let startDate = now.addingTimeInterval(-minutesBack * 60) // Convert minutes to seconds
+        
+        let predicate = HKQuery.predicateForSamples(withStart: startDate,
+                                                   end: now,
+                                                   options: .strictEndDate)
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: heartRate,
+                                      predicate: predicate,
+                                      limit: 1,
+                                      sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate,
+                                                                         ascending: false)]) { (_, samples, error) in
+                if let error = error {
+                    print("⚠️ Heart rate fetch error: \(error.localizedDescription)")
+                    // Return default heart rate on error
+                    continuation.resume(returning: 70.0)
+                    return
+                }
+                
+                guard let sample = samples?.first as? HKQuantitySample else {
+                    print("⚠️ No recent heart rate data found, using default value")
+                    // Return default heart rate if no data available
+                    continuation.resume(returning: 70.0)
+                    return
+                }
+                
+                let hrValue = sample.quantity.doubleValue(for: HKUnit(from: "count/min"))
+                print("❤️ Latest heart rate: \(hrValue) bpm at \(sample.endDate)")
+                continuation.resume(returning: hrValue)
+            }
+            store.execute(query)
+        }
+    }
 }

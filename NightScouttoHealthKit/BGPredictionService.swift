@@ -46,30 +46,49 @@ class BGPredictionService: ObservableObject {
             // Clear any previous errors
             self.lastError = nil
             
+            print("\n🩺 === HEALTH DATA FETCHING ===")
+            
             // Get the latest glucose values and calculate trend (momentum)
             let currentGlucose = try await healthKitFeatureProvider.fetchLatestGlucoseValue()
+            print("🩸 Current Blood Glucose: \(String(format: "%.1f", currentGlucose)) mg/dL")
+            
             let recentGlucoseReadings = try await healthKitFeatureProvider.fetchRecentGlucoseValues(limit: 10)
+            print("📊 Recent glucose readings count: \(recentGlucoseReadings.count)")
+            if recentGlucoseReadings.count >= 2 {
+                print("📈 Recent values: [\(String(format: "%.1f", recentGlucoseReadings[0])), \(String(format: "%.1f", recentGlucoseReadings[1]))] mg/dL")
+            }
             
             // Calculate glucose momentum (rate of change)
             let momentum = calculateMomentum(from: recentGlucoseReadings)
+            print("🚀 Glucose Momentum: \(String(format: "%.2f", momentum)) mg/dL/min")
             
             // Get IOB (Insulin On Board)
             let iob = try await getInsulinOnBoard()
+            print("💉 Insulin On Board (IOB): \(String(format: "%.2f", iob)) units")
             
             // Get COB (Carbs On Board)
             let cob = try await getCarbsOnBoard()
+            print("🍞 Carbs On Board (COB): \(String(format: "%.1f", cob)) grams")
             
             // Get time-of-day factor (circadian rhythm effect)
             let timeOfDayFactor = getTimeOfDayFactor()
+            print("🕒 Time of Day Factor: \(String(format: "%.3f", timeOfDayFactor))")
             
-            // Build the input tensor for the model (1, 24, 71)
+            // Get recent heart rate (within last 30 minutes)
+            let heartRate = try await healthKitFeatureProvider.fetchLatestHeartRate(minutesBack: 30.0)
+            print("❤️ Heart Rate: \(String(format: "%.0f", heartRate)) bpm")
+            
+            print("🩺 === DATA FETCHING COMPLETE ===\n")
+            
+            // Build the input tensor for the model (1, 24, 4)
             let inputTensor = try buildInputTensor(
                 currentGlucose: currentGlucose,
                 recentReadings: recentGlucoseReadings,
                 iob: iob,
                 cob: cob,
                 momentum: momentum,
-                timeOfDayFactor: timeOfDayFactor
+                timeOfDayFactor: timeOfDayFactor,
+                heartRate: heartRate
             )
             
             // Use BGTCNService for proper model prediction with scaling
@@ -113,13 +132,23 @@ class BGPredictionService: ObservableObject {
     }
     
     /// Build the input tensor for the prediction model
+    /// - Parameters:
+    ///   - currentGlucose: Current blood glucose value in mg/dL
+    ///   - recentReadings: Array of recent glucose readings
+    ///   - iob: Insulin on Board in units
+    ///   - cob: Carbs on Board in grams
+    ///   - momentum: Glucose momentum/trend
+    ///   - timeOfDayFactor: Time of day factor for circadian rhythm
+    ///   - heartRate: Current heart rate in beats per minute
+    /// - Returns: MLMultiArray with shape [1, 24, 4]
     private func buildInputTensor(
         currentGlucose: Double,
         recentReadings: [Double],
         iob: Double,
         cob: Double,
         momentum: Double,
-        timeOfDayFactor: Double
+        timeOfDayFactor: Double,
+        heartRate: Double
     ) throws -> MLMultiArray {
         // Create the input tensor with shape [1, 24, 4] to match rangeupto1_tcn model
         let inputTensor = try MLMultiArray(shape: [1, 24, 4], dataType: .float32)
@@ -134,27 +163,44 @@ class BGPredictionService: ObservableObject {
             (recentReadings[0] - recentReadings[1]) : 0.0
         
         // Fill the tensor with 4 features for each of the 24 time steps
-        // For simplicity, we'll repeat the same 4 values for each time step
-        // Feature 0: Current glucose (normalized)
-        // Feature 1: IOB (Insulin on Board)
-        // Feature 2: COB (Carbs on Board) 
-        // Feature 3: Glucose momentum/trend
+        // Feature order matches Core ML model expectations:
+        // Feature 0: Heart Rate (beats per minute)
+        // Feature 1: Blood Glucose (normalized)
+        // Feature 2: Insulin Dose (IOB - Insulin on Board)
+        // Feature 3: Dietary Carbohydrates (COB - Carbs on Board)
+        
+        // Log the raw input values
+        print("🔍 Building Input Tensor:")
+        print("🔍   Heart Rate: \(heartRate) bpm")
+        print("🔍   Current Glucose: \(currentGlucose) mg/dL")
+        print("🔍   IOB: \(iob) U")
+        print("🔍   COB: \(cob) g")
+        print("🔍   Glucose Trend: \(glucoseTrend) mg/dL")
+        print("🔍   Time of Day Factor: \(timeOfDayFactor)")
+        
+        let normalizedGlucose = (currentGlucose - 50.0) / 350.0
+        let normalizedHeartRate = (heartRate - 40.0) / 160.0  // Normalize HR from 40-200 bpm to 0-1
+        print("🔍   Normalized Heart Rate: \(normalizedHeartRate)")
+        print("🔍   Normalized Glucose: \(normalizedGlucose)")
         
         for timeStep in 0..<24 {
             let baseIndex = timeStep * 4
             
-            // Feature 0: Current glucose value (normalized to 0-1 range, assuming 50-400 mg/dL range)
-            inputTensor[baseIndex + 0] = NSNumber(value: Float((currentGlucose - 50.0) / 350.0))
+            // Feature 0: Heart Rate (normalized)
+            inputTensor[baseIndex + 0] = NSNumber(value: Float(normalizedHeartRate))
             
-            // Feature 1: IOB
-            inputTensor[baseIndex + 1] = NSNumber(value: Float(iob))
+            // Feature 1: Blood Glucose (normalized)
+            inputTensor[baseIndex + 1] = NSNumber(value: Float(normalizedGlucose))
             
-            // Feature 2: COB
-            inputTensor[baseIndex + 2] = NSNumber(value: Float(cob))
+            // Feature 2: Insulin Dose (IOB - Insulin on Board)
+            inputTensor[baseIndex + 2] = NSNumber(value: Float(iob))
             
-            // Feature 3: Glucose trend/momentum
-            inputTensor[baseIndex + 3] = NSNumber(value: Float(glucoseTrend))
+            // Feature 3: Dietary Carbohydrates (COB - Carbs on Board)
+            inputTensor[baseIndex + 3] = NSNumber(value: Float(cob))
         }
+        
+        // Log the first few tensor values
+        print("🔍   Tensor values [0-3]: [\(inputTensor[0]), \(inputTensor[1]), \(inputTensor[2]), \(inputTensor[3])]")
         
         return inputTensor
     }
@@ -169,26 +215,21 @@ class BGPredictionService: ObservableObject {
         momentum: Double,
         timeOfDayFactor: Double
     ) -> Double {
-        // Start with the current glucose as base
-        var prediction = currentGlucose
+        // Use the model prediction directly (rawPrediction is in mmol/L, convert to mg/dL)
+        var prediction = rawPrediction * 18.0  // Convert mmol/L to mg/dL
         
-        // Apply model prediction as a scaling factor
-        prediction = prediction + (rawPrediction * 50.0)
-        
-        // Apply insulin effect (IOB decreases glucose)
-        prediction = prediction - (iob * insulinSensitivityFactor)
-        
-        // Apply carb effect (COB increases glucose)
-        prediction = prediction + (cob / carbRatio * insulinSensitivityFactor)
-        
-        // Apply momentum (trend effect over 30 minutes)
-        prediction = prediction + (momentum * 30.0)
-        
-        // Apply time-of-day factor
+        // The model already accounts for most factors, but we can apply small adjustments
+        // Apply time-of-day factor (circadian rhythm effect)
         prediction = prediction * timeOfDayFactor
         
-        // Ensure prediction stays in a reasonable range
-        prediction = max(40.0, min(400.0, prediction))
+        // Ensure prediction stays in a reasonable range (40-500 mg/dL)
+        prediction = max(40.0, min(500.0, prediction))
+        
+        print("🔄 Final prediction calculation:")
+        print("   Raw model output: \(String(format: "%.2f", rawPrediction)) mmol/L")
+        print("   Converted to mg/dL: \(String(format: "%.1f", rawPrediction * 18.0)) mg/dL")
+        print("   Time-of-day factor: \(String(format: "%.3f", timeOfDayFactor))")
+        print("   Final prediction: \(String(format: "%.1f", prediction)) mg/dL")
         
         return prediction
     }
@@ -218,6 +259,12 @@ class BGPredictionService: ObservableObject {
         // Fetch recent insulin doses from HealthKit
         let recentInsulin = try await healthKitFeatureProvider.fetchRecentInsulinDoses(hoursBack: 6)
         
+        print("💉 Found \(recentInsulin.count) insulin doses in last 6 hours:")
+        for (index, dose) in recentInsulin.enumerated() {
+            let hoursAgo = Date().timeIntervalSince(dose.timestamp) / 3600.0
+            print("  \(index + 1). \(String(format: "%.2f", dose.units))U at \(dose.timestamp) (\(String(format: "%.1f", hoursAgo))h ago)")
+        }
+        
         // Calculate IOB based on insulin activity curve
         // This is a simplified model - a real implementation would use more sophisticated models
         var totalIOB: Double = 0.0
@@ -226,7 +273,9 @@ class BGPredictionService: ObservableObject {
         for dose in recentInsulin {
             let hoursAgo = now.timeIntervalSince(dose.timestamp) / 3600.0
             let remainingActivity = calculateInsulinActivityFactor(hoursAgo: hoursAgo)
-            totalIOB += dose.units * remainingActivity
+            let contributingIOB = dose.units * remainingActivity
+            totalIOB += contributingIOB
+            print("    → \(String(format: "%.2f", dose.units))U * \(String(format: "%.2f", remainingActivity)) = \(String(format: "%.2f", contributingIOB))U IOB")
         }
         
         // Cache the result
@@ -262,6 +311,12 @@ class BGPredictionService: ObservableObject {
         // Fetch recent carb intake from HealthKit
         let recentCarbs = try await healthKitFeatureProvider.fetchRecentCarbIntake(hoursBack: 6)
         
+        print("🍞 Found \(recentCarbs.count) carb entries in last 6 hours:")
+        for (index, intake) in recentCarbs.enumerated() {
+            let hoursAgo = Date().timeIntervalSince(intake.timestamp) / 3600.0
+            print("  \(index + 1). \(String(format: "%.1f", intake.grams))g at \(intake.timestamp) (\(String(format: "%.1f", hoursAgo))h ago)")
+        }
+        
         // Calculate COB based on carb absorption curve
         var totalCOB: Double = 0.0
         let now = Date()
@@ -269,7 +324,9 @@ class BGPredictionService: ObservableObject {
         for intake in recentCarbs {
             let hoursAgo = now.timeIntervalSince(intake.timestamp) / 3600.0
             let remainingFactor = calculateCarbAbsorptionFactor(hoursAgo: hoursAgo)
-            totalCOB += intake.grams * remainingFactor
+            let contributingCOB = intake.grams * remainingFactor
+            totalCOB += contributingCOB
+            print("    → \(String(format: "%.1f", intake.grams))g * \(String(format: "%.2f", remainingFactor)) = \(String(format: "%.1f", contributingCOB))g COB")
         }
         
         // Cache the result
@@ -330,6 +387,38 @@ class BGPredictionService: ObservableObject {
         print("  - Predicted mg/dL: \(String(format: "%.1f", predictedValueMgdl))")
         print("  - Predicted mmol/L: \(String(format: "%.1f", predictedValueMgdl / 18.0))")
         print("  - Storing in \(useMgdl ? "mg/dL" : "mmol/L") format")
+        
+        // Run all 6 models and log their predictions to terminal
+        do {
+            // Get current glucose and recent readings to build input for all models
+            let currentGlucose = try await healthKitFeatureProvider.fetchLatestGlucoseValue()
+            let recentGlucoseReadings = try await healthKitFeatureProvider.fetchRecentGlucoseValues(limit: 10)
+            let momentum = calculateMomentum(from: recentGlucoseReadings)
+            let iob = try await getInsulinOnBoard()
+            let cob = try await getCarbsOnBoard()
+            let timeOfDayFactor = getTimeOfDayFactor()
+            let heartRate = try await healthKitFeatureProvider.fetchLatestHeartRate(minutesBack: 30.0)
+            
+            // Build the input tensor (same as used for the main prediction)
+            let inputTensor = try buildInputTensor(
+                currentGlucose: currentGlucose,
+                recentReadings: recentGlucoseReadings,
+                iob: iob,
+                cob: cob,
+                momentum: momentum,
+                timeOfDayFactor: timeOfDayFactor,
+                heartRate: heartRate
+            )
+            
+            // Run all models in series and log their predictions
+            await SeriesPredictionService.shared.runSeriesPredictions(
+                window: inputTensor,
+                currentBG: currentGlucose,
+                usedMgdl: true
+            )
+        } catch {
+            print("⚠️ Failed to run series predictions: \(error)")
+        }
         
         // Get current BG for reference
         let currentBGInMgdl = try await healthKitFeatureProvider.fetchLatestGlucoseValue()
