@@ -3,6 +3,10 @@ import SwiftData
 import CoreML
 import Accelerate
 
+// NOTE: Model 1 (BGTCNService) and all references to it have been commented out
+// because Core ML types for Model 1 are not present in this project.
+// The code is preserved here for future use when types become available.
+
 @Model
 final class Prediction: @unchecked Sendable, Identifiable, Hashable {
     // Core prediction data (original fields)
@@ -99,12 +103,16 @@ final class Prediction: @unchecked Sendable, Identifiable, Hashable {
 }
 
 // MARK: - Model 1 Service (Original BGTCNService)
-final class BGTCNService {
+/*
+final class BGTCNService: ModelService {
     static let shared = BGTCNService()
 
     private let model: rangeupto1_tcn  // auto‑generated Core ML class
-    private let mean: [Float]
-    private let std: [Float]
+    private let inputMean: [Float]
+    private let inputStd: [Float]
+    // Output scaling parameters for denormalization
+    private let outputMean: Float = 7.0  // Typical glucose mean around 7 mmol/L (126 mg/dL)
+    private let outputStd: Float = 3.0   // Reasonable glucose std around 3 mmol/L (54 mg/dL)
 
     private init() {
         // Load compiled model
@@ -113,31 +121,32 @@ final class BGTCNService {
         }
         self.model = m
         
-        // Use default scaling values for now (can be updated when metadata format is confirmed)
-        self.mean = [0.0, 0.0, 0.0, 0.0]
-        self.std  = [1.0, 1.0, 1.0, 1.0]
-        precondition(mean.count == 4 && std.count == 4, "Scaler length mismatch")
+        // Input scaling values for the 8 features: [heart_rate, blood_glucose, insulin_dose, dietary_carbohydrates, bg_trend, hr_trend, hour_sin, hour_cos]
+        self.inputMean = [70.0, 7.0, 2.0, 30.0, 0.0, 0.0, 0.0, 0.0]  // Scale only first 4 features
+        self.inputStd  = [20.0, 3.0, 5.0, 40.0, 1.0, 1.0, 1.0, 1.0]  // Scale only first 4 features
+        precondition(inputMean.count == 8 && inputStd.count == 8, "Input scaler length mismatch")
     }
 
-    /// Main entry – pass a raw 24×4 window (Float32, shape (24,4), row‑major).
+    /// Main entry – pass a raw 24×8 window (Float32, shape (24,8), row‑major).
     func predict(window raw: MLMultiArray,
                  currentBG: Double,
                  usedMgdl: Bool) throws -> Prediction {
-        // 1. Copy & scale in‑place (raw is (24,4) or (1,24,4))
+        // 1. Copy & scale in‑place (raw is (24,8) or (1,24,8))
         let shape = raw.shape.map { $0.intValue }
-        guard shape.suffix(2) == [24, 4] else {
+        guard shape.suffix(2) == [24, 8] else {
             throw NSError(domain: "BGTCN", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey : "Expected (1,24,4) or (24,4) array"])
+                          userInfo: [NSLocalizedDescriptionKey : "Expected (1,24,8) or (24,8) array"])
         }
         
         // Debug: Log raw input values before scaling
         let ptr = UnsafeMutablePointer<Float32>(OpaquePointer(raw.dataPointer))
-        print("🔍 Model 1 Raw Input (first 4 features): [\(ptr[0]), \(ptr[1]), \(ptr[2]), \(ptr[3])]")
-        print("🔍 Model 1 Scaling factors - Mean: \(mean), Std: \(std)")
+        print("🔍 Model 1 Raw Input (first 8 features): [\(ptr[0]), \(ptr[1]), \(ptr[2]), \(ptr[3]), \(ptr[4]), \(ptr[5]), \(ptr[6]), \(ptr[7])]")
+        print("🔍 Model 1 Input scaling factors - Mean: \(inputMean), Std: \(inputStd)")
         
-        let strideT = 4
-        for f in 0..<4 {
-            let m = mean[f], s = std[f]
+        // Apply input scaling to the 8 features across 24 time steps
+        let strideT = 8
+        for f in 0..<8 {
+            let m = inputMean[f], s = inputStd[f]
             var idx = f
             for _ in 0..<24 {
                 let originalValue = ptr[idx]
@@ -153,25 +162,38 @@ final class BGTCNService {
         // 2. Run prediction
         let input = rangeupto1_tcnInput(input_1: raw)
         let out   = try model.prediction(input: input)
-        // Extract the first (and likely only) output value using reflection
-        let rawOutputMmol  = extractOutputValue(from: out)
+        // Extract the raw normalized output value using reflection
+        let normalizedOutput = extractOutputValue(from: out)
         
-        print("🔍 Model 1 Raw Output: \(rawOutputMmol) mmol/L")
-        print("🔍 Model 1 Raw Output: \(String(format: "%.1f", rawOutputMmol * 18.0)) mg/dL")
+        // Denormalize the output: denormalized = normalized * std + mean
+        let rawOutputMmol = normalizedOutput * Double(outputStd) + Double(outputMean)
+        
+        // Ensure the prediction is within reasonable bounds (2.0-30.0 mmol/L = 36-540 mg/dL)
+        let clampedOutputMmol = max(2.0, min(30.0, rawOutputMmol))
+        
+        print("🔍 Model 1 Normalized Output: \(normalizedOutput)")
+        print("🔍 Model 1 Denormalized Output: \(rawOutputMmol) mmol/L")
+        print("🔍 Model 1 Clamped Output: \(clampedOutputMmol) mmol/L = \(String(format: "%.1f", clampedOutputMmol * 18.0)) mg/dL")
         
         // Convert model output to the requested units
-        let predictionValue = usedMgdl ? (rawOutputMmol * 18.0) : rawOutputMmol
+        let predictionValue = usedMgdl ? (clampedOutputMmol * 18.0) : clampedOutputMmol
         let currentBGMmol = currentBG / 18.0  // Convert current BG to mmol/L for comparison
         
         // 3. Build data object for SwiftData
-        return Prediction(timestamp: Date(),
-                          predictionValue: predictionValue,
-                          usedMgdlUnits: usedMgdl,
-                          currentBG: currentBG,
-                          stabilityStatus: "",           // set by caller
-                          modelOutput: rawOutputMmol,    // Store raw model output in mmol/L
-                          modelPredictedChange: rawOutputMmol - currentBGMmol,  // Change in mmol/L
-                          observedTrend: 0)
+        let modelPredictedChange = clampedOutputMmol - currentBGMmol
+        
+        return Prediction(
+            timestamp: Date(),
+            predictionValue: predictionValue,
+            usedMgdlUnits: usedMgdl,
+            currentBG: currentBG,
+            stabilityStatus: "",           // set by caller
+            modelOutput: clampedOutputMmol,    // Store clamped model output in mmol/L
+            modelPredictedChange: modelPredictedChange * (usedMgdl ? 18.0 : 1.0),  // Convert change to requested units
+            observedTrend: 0,
+            actualBG: 0,
+            actualBGTimestamp: nil
+        )
     }
     
     /// Extract the output value from the model prediction using reflection
@@ -238,34 +260,38 @@ final class BGTCNService {
         return outputValue
     }
 }
+*/
 
-// MARK: - Model 2 Service
-final class BGTCN2Service {
+ // MARK: - Model 2 Service
+final class BGTCN2Service: ModelService {
     static let shared = BGTCN2Service()
 
     private let model: rangeupto2_tcn
-    private let mean: [Float]
-    private let std: [Float]
+    private let inputMean: [Float]
+    private let inputStd: [Float]
+    // Output scaling parameters for denormalization
+    private let outputMean: Float = 7.0  // Typical glucose mean around 7 mmol/L (126 mg/dL)
+    private let outputStd: Float = 3.0   // Reasonable glucose std around 3 mmol/L (54 mg/dL)
 
     private init() {
         guard let m = try? rangeupto2_tcn(configuration: MLModelConfiguration()) else {
             fatalError("❌ Could not load rangeupto2_tcn.mlpackage")
         }
         self.model = m
-        self.mean = [0.0, 0.0, 0.0, 0.0]
-        self.std  = [1.0, 1.0, 1.0, 1.0]
-        precondition(mean.count == 4 && std.count == 4, "Scaler length mismatch")
+        // Input scaling values for the 8 features: [heart_rate, blood_glucose, insulin_dose, dietary_carbohydrates, bg_trend, hr_trend, hour_sin, hour_cos]
+        self.inputMean = [70.0, 7.0, 2.0, 30.0, 0.0, 0.0, 0.0, 0.0]  // Scale only first 4 features
+        self.inputStd  = [20.0, 3.0, 5.0, 40.0, 1.0, 1.0, 1.0, 1.0]  // Scale only first 4 features
     }
 
     func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
         let shape = raw.shape.map { $0.intValue }
-        guard shape.suffix(2) == [24, 4] else {
-            throw NSError(domain: "BGTCN2", code: 1, userInfo: [NSLocalizedDescriptionKey : "Expected (1,24,4) or (24,4) array"])
+        guard shape.suffix(2) == [24, 8] else {
+            throw NSError(domain: "BGTCN2", code: 1, userInfo: [NSLocalizedDescriptionKey : "Expected (1,24,8) or (24,8) array"])
         }
         let ptr = UnsafeMutablePointer<Float32>(OpaquePointer(raw.dataPointer))
-        let strideT = 4
-        for f in 0..<4 {
-            let m = mean[f], s = std[f]
+        let strideT = 8
+        for f in 0..<8 {
+            let m = inputMean[f], s = inputStd[f]
             var idx = f
             for _ in 0..<24 {
                 ptr[idx] = (ptr[idx] - m) / s
@@ -274,13 +300,34 @@ final class BGTCN2Service {
         }
         let input = rangeupto2_tcnInput(input_1: raw)
         let out   = try model.prediction(input: input)
-        let rawOutputMmol = extractOutputValue(from: out)
+        
+        // Extract the raw normalized output value using reflection
+        let normalizedOutput = extractOutputValue(from: out)
+        
+        // Denormalize the output: denormalized = normalized * std + mean
+        let rawOutputMmol = normalizedOutput * Double(outputStd) + Double(outputMean)
+        
+        // Ensure the prediction is within reasonable bounds (2.0-30.0 mmol/L = 36-540 mg/dL)
+        let clampedOutputMmol = max(2.0, min(30.0, rawOutputMmol))
         
         // Convert model output to the requested units
-        let predictionValue = usedMgdl ? (rawOutputMmol * 18.0) : rawOutputMmol
+        let predictionValue = usedMgdl ? (clampedOutputMmol * 18.0) : clampedOutputMmol
         let currentBGMmol = currentBG / 18.0  // Convert current BG to mmol/L for comparison
         
-        return Prediction(timestamp: Date(), predictionValue: predictionValue, usedMgdlUnits: usedMgdl, currentBG: currentBG, stabilityStatus: "", modelOutput: rawOutputMmol, modelPredictedChange: rawOutputMmol - currentBGMmol, observedTrend: 0)
+        let modelPredictedChange = clampedOutputMmol - currentBGMmol
+        
+        return Prediction(
+            timestamp: Date(),
+            predictionValue: predictionValue,
+            usedMgdlUnits: usedMgdl,
+            currentBG: currentBG,
+            stabilityStatus: "",
+            modelOutput: clampedOutputMmol,
+            modelPredictedChange: modelPredictedChange * (usedMgdl ? 18.0 : 1.0),
+            observedTrend: 0,
+            actualBG: 0,
+            actualBGTimestamp: nil
+        )
     }
     
     private func extractOutputValue(from prediction: rangeupto2_tcnOutput) -> Double {
@@ -324,11 +371,13 @@ final class BGTCN2Service {
 }
 
 // MARK: - Model 3 Service
-final class BGTCN3Service {
+final class BGTCN3Service: ModelService {
     static let shared = BGTCN3Service()
     private let model: rangeupto3_tcn
-    private let mean: [Float] = [0.0, 0.0, 0.0, 0.0]
-    private let std: [Float] = [1.0, 1.0, 1.0, 1.0]
+    private let inputMean: [Float] = [70.0, 7.0, 2.0, 30.0, 0.0, 0.0, 0.0, 0.0]
+    private let inputStd: [Float] = [20.0, 3.0, 5.0, 40.0, 1.0, 1.0, 1.0, 1.0]
+    private let outputMean: Float = 7.0
+    private let outputStd: Float = 3.0
 
     private init() {
         guard let m = try? rangeupto3_tcn(configuration: MLModelConfiguration()) else {
@@ -339,13 +388,13 @@ final class BGTCN3Service {
 
     func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
         let shape = raw.shape.map { $0.intValue }
-        guard shape.suffix(2) == [24, 4] else {
-            throw NSError(domain: "BGTCN3", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected (1,24,4) or (24,4) array"])
+        guard shape.suffix(2) == [24, 8] else {
+            throw NSError(domain: "BGTCN3", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected (1,24,8) or (24,8) array"])
         }
         let ptr = UnsafeMutablePointer<Float32>(OpaquePointer(raw.dataPointer))
-        let strideT = 4
-        for f in 0..<4 {
-            let m = mean[f], s = std[f]
+        let strideT = 8
+        for f in 0..<8 {
+            let m = inputMean[f], s = inputStd[f]
             var idx = f
             for _ in 0..<24 {
                 ptr[idx] = (ptr[idx] - m) / s
@@ -354,13 +403,34 @@ final class BGTCN3Service {
         }
         let input = rangeupto3_tcnInput(input_1: raw)
         let out = try model.prediction(input: input)
-        let rawOutputMmol = extractOutputValue(from: out)
+        
+        // Extract the raw normalized output value using reflection
+        let normalizedOutput = extractOutputValue(from: out)
+        
+        // Denormalize the output: denormalized = normalized * std + mean
+        let rawOutputMmol = normalizedOutput * Double(outputStd) + Double(outputMean)
+        
+        // Ensure the prediction is within reasonable bounds (2.0-30.0 mmol/L = 36-540 mg/dL)
+        let clampedOutputMmol = max(2.0, min(30.0, rawOutputMmol))
         
         // Convert model output to the requested units
-        let predictionValue = usedMgdl ? (rawOutputMmol * 18.0) : rawOutputMmol
+        let predictionValue = usedMgdl ? (clampedOutputMmol * 18.0) : clampedOutputMmol
         let currentBGMmol = currentBG / 18.0  // Convert current BG to mmol/L for comparison
         
-        return Prediction(timestamp: Date(), predictionValue: predictionValue, usedMgdlUnits: usedMgdl, currentBG: currentBG, stabilityStatus: "", modelOutput: rawOutputMmol, modelPredictedChange: rawOutputMmol - currentBGMmol, observedTrend: 0)
+        let modelPredictedChange = clampedOutputMmol - currentBGMmol
+        
+        return Prediction(
+            timestamp: Date(),
+            predictionValue: predictionValue,
+            usedMgdlUnits: usedMgdl,
+            currentBG: currentBG,
+            stabilityStatus: "",
+            modelOutput: clampedOutputMmol,
+            modelPredictedChange: modelPredictedChange * (usedMgdl ? 18.0 : 1.0),
+            observedTrend: 0,
+            actualBG: 0,
+            actualBGTimestamp: nil
+        )
     }
     
     private func extractOutputValue(from prediction: rangeupto3_tcnOutput) -> Double {
@@ -402,11 +472,13 @@ final class BGTCN3Service {
 }
 
 // MARK: - Model 4 Service
-final class BGTCN4Service {
+final class BGTCN4Service: ModelService {
     static let shared = BGTCN4Service()
     private let model: rangeupto4_tcn
-    private let mean: [Float] = [0.0, 0.0, 0.0, 0.0]
-    private let std: [Float] = [1.0, 1.0, 1.0, 1.0]
+    private let inputMean: [Float] = [70.0, 7.0, 2.0, 30.0, 0.0, 0.0, 0.0, 0.0]
+    private let inputStd: [Float] = [20.0, 3.0, 5.0, 40.0, 1.0, 1.0, 1.0, 1.0]
+    private let outputMean: Float = 7.0
+    private let outputStd: Float = 3.0
 
     private init() {
         guard let m = try? rangeupto4_tcn(configuration: MLModelConfiguration()) else {
@@ -417,13 +489,13 @@ final class BGTCN4Service {
 
     func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
         let shape = raw.shape.map { $0.intValue }
-        guard shape.suffix(2) == [24, 4] else {
-            throw NSError(domain: "BGTCN4", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected (1,24,4) or (24,4) array"])
+        guard shape.suffix(2) == [24, 8] else {
+            throw NSError(domain: "BGTCN4", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected (1,24,8) or (24,8) array"])
         }
         let ptr = UnsafeMutablePointer<Float32>(OpaquePointer(raw.dataPointer))
-        let strideT = 4
-        for f in 0..<4 {
-            let m = mean[f], s = std[f]
+        let strideT = 8
+        for f in 0..<8 {
+            let m = inputMean[f], s = inputStd[f]
             var idx = f
             for _ in 0..<24 {
                 ptr[idx] = (ptr[idx] - m) / s
@@ -432,13 +504,34 @@ final class BGTCN4Service {
         }
         let input = rangeupto4_tcnInput(input_1: raw)
         let out = try model.prediction(input: input)
-        let rawOutputMmol = extractOutputValue(from: out)
+        
+        // Extract the raw normalized output value using reflection
+        let normalizedOutput = extractOutputValue(from: out)
+        
+        // Denormalize the output: denormalized = normalized * std + mean
+        let rawOutputMmol = normalizedOutput * Double(outputStd) + Double(outputMean)
+        
+        // Ensure the prediction is within reasonable bounds (2.0-30.0 mmol/L = 36-540 mg/dL)
+        let clampedOutputMmol = max(2.0, min(30.0, rawOutputMmol))
         
         // Convert model output to the requested units
-        let predictionValue = usedMgdl ? (rawOutputMmol * 18.0) : rawOutputMmol
+        let predictionValue = usedMgdl ? (clampedOutputMmol * 18.0) : clampedOutputMmol
         let currentBGMmol = currentBG / 18.0  // Convert current BG to mmol/L for comparison
         
-        return Prediction(timestamp: Date(), predictionValue: predictionValue, usedMgdlUnits: usedMgdl, currentBG: currentBG, stabilityStatus: "", modelOutput: rawOutputMmol, modelPredictedChange: rawOutputMmol - currentBGMmol, observedTrend: 0)
+        let modelPredictedChange = clampedOutputMmol - currentBGMmol
+        
+        return Prediction(
+            timestamp: Date(),
+            predictionValue: predictionValue,
+            usedMgdlUnits: usedMgdl,
+            currentBG: currentBG,
+            stabilityStatus: "",
+            modelOutput: clampedOutputMmol,
+            modelPredictedChange: modelPredictedChange * (usedMgdl ? 18.0 : 1.0),
+            observedTrend: 0,
+            actualBG: 0,
+            actualBGTimestamp: nil
+        )
     }
     
     private func extractOutputValue(from prediction: rangeupto4_tcnOutput) -> Double {
@@ -480,11 +573,13 @@ final class BGTCN4Service {
 }
 
 // MARK: - Model 5 Service
-final class BGTCN5Service {
+final class BGTCN5Service: ModelService {
     static let shared = BGTCN5Service()
     private let model: rangeupto5_tcn
-    private let mean: [Float] = [0.0, 0.0, 0.0, 0.0]
-    private let std: [Float] = [1.0, 1.0, 1.0, 1.0]
+    private let inputMean: [Float] = [70.0, 7.0, 2.0, 30.0, 0.0, 0.0, 0.0, 0.0]
+    private let inputStd: [Float] = [20.0, 3.0, 5.0, 40.0, 1.0, 1.0, 1.0, 1.0]
+    private let outputMean: Float = 7.0
+    private let outputStd: Float = 3.0
 
     private init() {
         guard let m = try? rangeupto5_tcn(configuration: MLModelConfiguration()) else {
@@ -495,13 +590,13 @@ final class BGTCN5Service {
 
     func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
         let shape = raw.shape.map { $0.intValue }
-        guard shape.suffix(2) == [24, 4] else {
-            throw NSError(domain: "BGTCN5", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected (1,24,4) or (24,4) array"])
+        guard shape.suffix(2) == [24, 8] else {
+            throw NSError(domain: "BGTCN5", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected (1,24,8) or (24,8) array"])
         }
         let ptr = UnsafeMutablePointer<Float32>(OpaquePointer(raw.dataPointer))
-        let strideT = 4
-        for f in 0..<4 {
-            let m = mean[f], s = std[f]
+        let strideT = 8
+        for f in 0..<8 {
+            let m = inputMean[f], s = inputStd[f]
             var idx = f
             for _ in 0..<24 {
                 ptr[idx] = (ptr[idx] - m) / s
@@ -510,13 +605,34 @@ final class BGTCN5Service {
         }
         let input = rangeupto5_tcnInput(input_1: raw)
         let out = try model.prediction(input: input)
-        let rawOutputMmol = extractOutputValue(from: out)
+        
+        // Extract the raw normalized output value using reflection
+        let normalizedOutput = extractOutputValue(from: out)
+        
+        // Denormalize the output: denormalized = normalized * std + mean
+        let rawOutputMmol = normalizedOutput * Double(outputStd) + Double(outputMean)
+        
+        // Ensure the prediction is within reasonable bounds (2.0-30.0 mmol/L = 36-540 mg/dL)
+        let clampedOutputMmol = max(2.0, min(30.0, rawOutputMmol))
         
         // Convert model output to the requested units
-        let predictionValue = usedMgdl ? (rawOutputMmol * 18.0) : rawOutputMmol
+        let predictionValue = usedMgdl ? (clampedOutputMmol * 18.0) : clampedOutputMmol
         let currentBGMmol = currentBG / 18.0  // Convert current BG to mmol/L for comparison
         
-        return Prediction(timestamp: Date(), predictionValue: predictionValue, usedMgdlUnits: usedMgdl, currentBG: currentBG, stabilityStatus: "", modelOutput: rawOutputMmol, modelPredictedChange: rawOutputMmol - currentBGMmol, observedTrend: 0)
+        let modelPredictedChange = clampedOutputMmol - currentBGMmol
+        
+        return Prediction(
+            timestamp: Date(),
+            predictionValue: predictionValue,
+            usedMgdlUnits: usedMgdl,
+            currentBG: currentBG,
+            stabilityStatus: "",
+            modelOutput: clampedOutputMmol,
+            modelPredictedChange: modelPredictedChange * (usedMgdl ? 18.0 : 1.0),
+            observedTrend: 0,
+            actualBG: 0,
+            actualBGTimestamp: nil
+        )
     }
     
     private func extractOutputValue(from prediction: rangeupto5_tcnOutput) -> Double {
@@ -558,11 +674,13 @@ final class BGTCN5Service {
 }
 
 // MARK: - Model 6 Service
-final class BGTCN6Service {
+final class BGTCN6Service: ModelService {
     static let shared = BGTCN6Service()
     private let model: rangeupto6_tcn
-    private let mean: [Float] = [0.0, 0.0, 0.0, 0.0]
-    private let std: [Float] = [1.0, 1.0, 1.0, 1.0]
+    private let inputMean: [Float] = [70.0, 7.0, 2.0, 30.0, 0.0, 0.0, 0.0, 0.0]
+    private let inputStd: [Float] = [20.0, 3.0, 5.0, 40.0, 1.0, 1.0, 1.0, 1.0]
+    private let outputMean: Float = 7.0
+    private let outputStd: Float = 3.0
 
     private init() {
         guard let m = try? rangeupto6_tcn(configuration: MLModelConfiguration()) else {
@@ -573,13 +691,13 @@ final class BGTCN6Service {
 
     func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
         let shape = raw.shape.map { $0.intValue }
-        guard shape.suffix(2) == [24, 4] else {
-            throw NSError(domain: "BGTCN6", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected (1,24,4) or (24,4) array"])
+        guard shape.suffix(2) == [24, 8] else {
+            throw NSError(domain: "BGTCN6", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected (1,24,8) or (24,8) array"])
         }
         let ptr = UnsafeMutablePointer<Float32>(OpaquePointer(raw.dataPointer))
-        let strideT = 4
-        for f in 0..<4 {
-            let m = mean[f], s = std[f]
+        let strideT = 8
+        for f in 0..<8 {
+            let m = inputMean[f], s = inputStd[f]
             var idx = f
             for _ in 0..<24 {
                 ptr[idx] = (ptr[idx] - m) / s
@@ -588,13 +706,34 @@ final class BGTCN6Service {
         }
         let input = rangeupto6_tcnInput(input_1: raw)
         let out = try model.prediction(input: input)
-        let rawOutputMmol = extractOutputValue(from: out)
+        
+        // Extract the raw normalized output value using reflection
+        let normalizedOutput = extractOutputValue(from: out)
+        
+        // Denormalize the output: denormalized = normalized * std + mean
+        let rawOutputMmol = normalizedOutput * Double(outputStd) + Double(outputMean)
+        
+        // Ensure the prediction is within reasonable bounds (2.0-30.0 mmol/L = 36-540 mg/dL)
+        let clampedOutputMmol = max(2.0, min(30.0, rawOutputMmol))
         
         // Convert model output to the requested units
-        let predictionValue = usedMgdl ? (rawOutputMmol * 18.0) : rawOutputMmol
+        let predictionValue = usedMgdl ? (clampedOutputMmol * 18.0) : clampedOutputMmol
         let currentBGMmol = currentBG / 18.0  // Convert current BG to mmol/L for comparison
         
-        return Prediction(timestamp: Date(), predictionValue: predictionValue, usedMgdlUnits: usedMgdl, currentBG: currentBG, stabilityStatus: "", modelOutput: rawOutputMmol, modelPredictedChange: rawOutputMmol - currentBGMmol, observedTrend: 0)
+        let modelPredictedChange = clampedOutputMmol - currentBGMmol
+        
+        return Prediction(
+            timestamp: Date(),
+            predictionValue: predictionValue,
+            usedMgdlUnits: usedMgdl,
+            currentBG: currentBG,
+            stabilityStatus: "",
+            modelOutput: clampedOutputMmol,
+            modelPredictedChange: modelPredictedChange * (usedMgdl ? 18.0 : 1.0),
+            observedTrend: 0,
+            actualBG: 0,
+            actualBGTimestamp: nil
+        )
     }
     
     private func extractOutputValue(from prediction: rangeupto6_tcnOutput) -> Double {
@@ -658,35 +797,55 @@ final class SeriesPredictionService {
         return copy
     }
     
-    /// Run all 6 models in series and log their predictions
-    func runSeriesPredictions(window: MLMultiArray, currentBG: Double, usedMgdl: Bool) async {
+    /// Run all 6 models in series, log predictions, and save to SwiftData
+    func runSeriesPredictions(window: MLMultiArray, currentBG: Double, usedMgdl: Bool, modelContext: ModelContext? = nil) async {
         print("🔎 Starting Series Predictions - Current BG: \(currentBG) \(usedMgdl ? "mg/dL" : "mmol/L")")
         
+        // Create MultiModelPrediction record
+        let currentBGInMmol = usedMgdl ? (currentBG / 18.0) : currentBG
+        let multiPrediction = MultiModelPrediction(timestamp: Date(), currentBG_mmol: currentBGInMmol)
+        
         do {
-            // Create a copy of the window for each model since they modify the input
+            // --- Model 1 commented out due to missing Core ML types ---
+            /*
             let windowCopy1 = copyMLMultiArray(window)
             let prediction1 = try BGTCNService.shared.predict(window: windowCopy1, currentBG: currentBG, usedMgdl: usedMgdl)
+            multiPrediction.setPrediction(model: 1, mmol: prediction1.modelOutput)
             print("✓ Model 1 (rangeupto1_tcn): \(String(format: "%.2f", prediction1.modelOutput)) mmol/L = \(String(format: "%.1f", prediction1.modelOutput * 18.0)) mg/dL")
+            */
+            // --- End Model 1 ---
             
             let windowCopy2 = copyMLMultiArray(window)
             let prediction2 = try BGTCN2Service.shared.predict(window: windowCopy2, currentBG: currentBG, usedMgdl: usedMgdl)
+            multiPrediction.setPrediction(model: 2, mmol: prediction2.modelOutput)
             print("✓ Model 2 (rangeupto2_tcn): \(String(format: "%.2f", prediction2.modelOutput)) mmol/L = \(String(format: "%.1f", prediction2.modelOutput * 18.0)) mg/dL")
             
             let windowCopy3 = copyMLMultiArray(window)
             let prediction3 = try BGTCN3Service.shared.predict(window: windowCopy3, currentBG: currentBG, usedMgdl: usedMgdl)
+            multiPrediction.setPrediction(model: 3, mmol: prediction3.modelOutput)
             print("✓ Model 3 (rangeupto3_tcn): \(String(format: "%.2f", prediction3.modelOutput)) mmol/L = \(String(format: "%.1f", prediction3.modelOutput * 18.0)) mg/dL")
             
             let windowCopy4 = copyMLMultiArray(window)
             let prediction4 = try BGTCN4Service.shared.predict(window: windowCopy4, currentBG: currentBG, usedMgdl: usedMgdl)
+            multiPrediction.setPrediction(model: 4, mmol: prediction4.modelOutput)
             print("✓ Model 4 (rangeupto4_tcn): \(String(format: "%.2f", prediction4.modelOutput)) mmol/L = \(String(format: "%.1f", prediction4.modelOutput * 18.0)) mg/dL")
             
             let windowCopy5 = copyMLMultiArray(window)
             let prediction5 = try BGTCN5Service.shared.predict(window: windowCopy5, currentBG: currentBG, usedMgdl: usedMgdl)
+            multiPrediction.setPrediction(model: 5, mmol: prediction5.modelOutput)
             print("✓ Model 5 (rangeupto5_tcn): \(String(format: "%.2f", prediction5.modelOutput)) mmol/L = \(String(format: "%.1f", prediction5.modelOutput * 18.0)) mg/dL")
             
             let windowCopy6 = copyMLMultiArray(window)
             let prediction6 = try BGTCN6Service.shared.predict(window: windowCopy6, currentBG: currentBG, usedMgdl: usedMgdl)
+            multiPrediction.setPrediction(model: 6, mmol: prediction6.modelOutput)
             print("✓ Model 6 (rangeupto6_tcn): \(String(format: "%.2f", prediction6.modelOutput)) mmol/L = \(String(format: "%.1f", prediction6.modelOutput * 18.0)) mg/dL")
+            
+            // Save to SwiftData if context is provided
+            if let context = modelContext {
+                context.insert(multiPrediction)
+                try context.save()
+                print("💾 Saved multi-model prediction to SwiftData")
+            }
             
             print("✅ Series Predictions Complete\n")
             
@@ -695,3 +854,4 @@ final class SeriesPredictionService {
         }
     }
 }
+

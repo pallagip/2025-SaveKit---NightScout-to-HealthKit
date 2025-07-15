@@ -21,7 +21,7 @@ struct NightScouttoHealthKitApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .modelContainer(for: Prediction.self)
+                .modelContainer(for: [Prediction.self, MultiModelPrediction.self])
         }
     }
 }

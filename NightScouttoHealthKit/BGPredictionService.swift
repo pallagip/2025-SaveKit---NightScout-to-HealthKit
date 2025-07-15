@@ -8,6 +8,7 @@
 import Foundation
 import CoreML
 import Combine
+import SwiftData
 
 /// A service that handles blood glucose predictions using a pre-trained BGPersonal_BiLSTM model
 /// Model architecture: Bidirectional LSTM + Dense layers
@@ -91,8 +92,8 @@ class BGPredictionService: ObservableObject {
                 heartRate: heartRate
             )
             
-            // Use BGTCNService for proper model prediction with scaling
-            let predictionResult = try BGTCNService.shared.predict(
+            // Use BGTCN2Service for proper model prediction with scaling
+            let predictionResult = try BGTCN2Service.shared.predict(
                 window: inputTensor,
                 currentBG: currentGlucose,
                 usedMgdl: true
@@ -140,7 +141,7 @@ class BGPredictionService: ObservableObject {
     ///   - momentum: Glucose momentum/trend
     ///   - timeOfDayFactor: Time of day factor for circadian rhythm
     ///   - heartRate: Current heart rate in beats per minute
-    /// - Returns: MLMultiArray with shape [1, 24, 4]
+    /// - Returns: MLMultiArray with shape [1, 24, 8]
     private func buildInputTensor(
         currentGlucose: Double,
         recentReadings: [Double],
@@ -150,11 +151,11 @@ class BGPredictionService: ObservableObject {
         timeOfDayFactor: Double,
         heartRate: Double
     ) throws -> MLMultiArray {
-        // Create the input tensor with shape [1, 24, 4] to match rangeupto1_tcn model
-        let inputTensor = try MLMultiArray(shape: [1, 24, 4], dataType: .float32)
+        // Create the input tensor with shape [1, 24, 8] to match all rangeupto Core ML models
+        let inputTensor = try MLMultiArray(shape: [1, 24, 8], dataType: .float32)
         
         // Initialize all values to 0
-        for i in 0..<(24 * 4) {
+        for i in 0..<(24 * 8) {
             inputTensor[i] = 0.0
         }
         
@@ -162,12 +163,16 @@ class BGPredictionService: ObservableObject {
         let glucoseTrend = recentReadings.count >= 2 ? 
             (recentReadings[0] - recentReadings[1]) : 0.0
         
-        // Fill the tensor with 4 features for each of the 24 time steps
+        // Fill the tensor with 8 features for each of the 24 time steps
         // Feature order matches Core ML model expectations:
-        // Feature 0: Heart Rate (beats per minute)
-        // Feature 1: Blood Glucose (normalized)
-        // Feature 2: Insulin Dose (IOB - Insulin on Board)
-        // Feature 3: Dietary Carbohydrates (COB - Carbs on Board)
+        // Feature 0: heart_rate - Instantaneous HR from Apple Watch (beats/min)
+        // Feature 1: blood_glucose - Sensor glucose at the same timestamp (mmol/L)
+        // Feature 2: insulin_dose - Cumulative bolus-insulin "decay" value (effective units still active)
+        // Feature 3: dietary_carbohydrates - Cumulative carb-impact "decay" value (grams still being absorbed)
+        // Feature 4: bg_trend - Short-term BG slope (Δ mmol/L per 5-min tick)
+        // Feature 5: hr_trend - Short-term HR slope (Δ bpm per 5-min tick)
+        // Feature 6: hour_sin - Circadian phase – sin(2π · hour/24)
+        // Feature 7: hour_cos - Circadian phase – cos(2π · hour/24)
         
         // Log the raw input values
         print("🔍 Building Input Tensor:")
@@ -183,24 +188,61 @@ class BGPredictionService: ObservableObject {
         print("🔍   Normalized Heart Rate: \(normalizedHeartRate)")
         print("🔍   Normalized Glucose: \(normalizedGlucose)")
         
+        // Calculate additional features
+        // Convert glucose from mg/dL to mmol/L for feature vector
+        let glucoseMmol = currentGlucose / 18.0
+        
+        // Calculate BG trend in mmol/L per 5-min tick
+        // Momentum is in mg/dL/min, so convert to mmol/L per 5-min tick
+        let bgTrend = (momentum * 5.0) / 18.0
+        
+        // Calculate HR trend (if we have sufficient heart rate history)
+        // For now, we'll use a default value of 0 if we don't have enough data
+        let hrTrend = 0.0 // Would be calculated from historical HR data
+        
+        // Calculate circadian phase using hour of day (sin and cos components)
+        let calendar = Calendar.current
+        let hour = Double(calendar.component(.hour, from: Date()))
+        let hourFraction = hour + Double(calendar.component(.minute, from: Date())) / 60.0
+        let hourSin = sin(2.0 * .pi * hourFraction / 24.0)
+        let hourCos = cos(2.0 * .pi * hourFraction / 24.0)
+        
+        print("🔍   Glucose (mmol/L): \(String(format: "%.2f", glucoseMmol))")
+        print("🔍   BG Trend (mmol/L per 5min): \(String(format: "%.3f", bgTrend))")
+        print("🔍   HR Trend (bpm per 5min): \(String(format: "%.1f", hrTrend))")
+        print("🔍   Hour Sin: \(String(format: "%.3f", hourSin))")
+        print("🔍   Hour Cos: \(String(format: "%.3f", hourCos))")
+        
         for timeStep in 0..<24 {
-            let baseIndex = timeStep * 4
+            let baseIndex = timeStep * 8
             
-            // Feature 0: Heart Rate (normalized)
-            inputTensor[baseIndex + 0] = NSNumber(value: Float(normalizedHeartRate))
+            // Feature 0: heart_rate - Instantaneous HR from Apple Watch (beats/min)
+            inputTensor[baseIndex + 0] = NSNumber(value: Float(heartRate))
             
-            // Feature 1: Blood Glucose (normalized)
-            inputTensor[baseIndex + 1] = NSNumber(value: Float(normalizedGlucose))
+            // Feature 1: blood_glucose - Sensor glucose at the same timestamp (mmol/L)
+            inputTensor[baseIndex + 1] = NSNumber(value: Float(glucoseMmol))
             
-            // Feature 2: Insulin Dose (IOB - Insulin on Board)
+            // Feature 2: insulin_dose - Cumulative bolus-insulin "decay" value (effective units still active)
             inputTensor[baseIndex + 2] = NSNumber(value: Float(iob))
             
-            // Feature 3: Dietary Carbohydrates (COB - Carbs on Board)
+            // Feature 3: dietary_carbohydrates - Cumulative carb-impact "decay" value (grams still being absorbed)
             inputTensor[baseIndex + 3] = NSNumber(value: Float(cob))
+            
+            // Feature 4: bg_trend - Short-term BG slope (Δ mmol/L per 5-min tick)
+            inputTensor[baseIndex + 4] = NSNumber(value: Float(bgTrend))
+            
+            // Feature 5: hr_trend - Short-term HR slope (Δ bpm per 5-min tick)
+            inputTensor[baseIndex + 5] = NSNumber(value: Float(hrTrend))
+            
+            // Feature 6: hour_sin - Circadian phase – sin(2π · hour/24)
+            inputTensor[baseIndex + 6] = NSNumber(value: Float(hourSin))
+            
+            // Feature 7: hour_cos - Circadian phase – cos(2π · hour/24)
+            inputTensor[baseIndex + 7] = NSNumber(value: Float(hourCos))
         }
         
         // Log the first few tensor values
-        print("🔍   Tensor values [0-3]: [\(inputTensor[0]), \(inputTensor[1]), \(inputTensor[2]), \(inputTensor[3])]")
+        print("🔍   Tensor values [0-7]: [\(inputTensor[0]), \(inputTensor[1]), \(inputTensor[2]), \(inputTensor[3]), \(inputTensor[4]), \(inputTensor[5]), \(inputTensor[6]), \(inputTensor[7])]")
         
         return inputTensor
     }
@@ -378,7 +420,7 @@ class BGPredictionService: ObservableObject {
     /// - Parameter useMgdl: Whether to use mg/dL units (true) or mmol/L (false)
     /// - Returns: A Prediction object that can be saved to SwiftData
     @MainActor
-    func createPredictionRecord(useMgdl: Bool) async throws -> Prediction {
+    func createPredictionRecord(useMgdl: Bool, modelContext: ModelContext? = nil) async throws -> Prediction {
         // Get prediction from the forecasting algorithm (always returns mg/dL internally)
         let (predictedValueMgdl, timestamp) = try await predictBloodGlucose()
         
@@ -414,7 +456,8 @@ class BGPredictionService: ObservableObject {
             await SeriesPredictionService.shared.runSeriesPredictions(
                 window: inputTensor,
                 currentBG: currentGlucose,
-                usedMgdl: true
+                usedMgdl: true,
+                modelContext: modelContext
             )
         } catch {
             print("⚠️ Failed to run series predictions: \(error)")
