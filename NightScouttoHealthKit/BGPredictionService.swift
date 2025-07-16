@@ -21,6 +21,8 @@ class BGPredictionService: ObservableObject {
     @Published var lastPredictionTimestamp: Date?
     @Published var isProcessing: Bool = false
     @Published var lastError: String?
+    @Published var lastModel6Prediction: Double = 0
+    @Published var lastModel6PredictionText: String = "—"
     
     // Constants for prediction scaling and adjustment
     private let baseGlucose: Double = 100.0
@@ -213,11 +215,16 @@ class BGPredictionService: ObservableObject {
         print("🔍   Hour Sin: \(String(format: "%.3f", hourSin))")
         print("🔍   Hour Cos: \(String(format: "%.3f", hourCos))")
         
+        // Calculate normalized heart rate for logging
+        let normalizedHR = (heartRate - 60.0) / 80.0
+        print("🔍   Normalized HR: \(String(format: "%.3f", normalizedHR))")
+        
         for timeStep in 0..<24 {
             let baseIndex = timeStep * 8
             
-            // Feature 0: heart_rate - Instantaneous HR from Apple Watch (beats/min)
-            inputTensor[baseIndex + 0] = NSNumber(value: Float(heartRate))
+            // Feature 0: heart_rate - Normalized heart rate (0-1 range to match scaler mean ≈ 0)
+            let normalizedHR = (heartRate - 60.0) / 80.0  // Normalize around mean 60 bpm with range ±80
+            inputTensor[baseIndex + 0] = NSNumber(value: Float(normalizedHR))
             
             // Feature 1: blood_glucose - Sensor glucose at the same timestamp (mmol/L)
             inputTensor[baseIndex + 1] = NSNumber(value: Float(glucoseMmol))
@@ -241,8 +248,8 @@ class BGPredictionService: ObservableObject {
             inputTensor[baseIndex + 7] = NSNumber(value: Float(hourCos))
         }
         
-        // Log the first few tensor values
-        print("🔍   Tensor values [0-7]: [\(inputTensor[0]), \(inputTensor[1]), \(inputTensor[2]), \(inputTensor[3]), \(inputTensor[4]), \(inputTensor[5]), \(inputTensor[6]), \(inputTensor[7])]")
+        // Log the first few tensor values (normalized values)
+        print("🔍   Tensor values [0-7]: [\(String(format: "%.3f", normalizedHR)), \(String(format: "%.3f", glucoseMmol)), \(String(format: "%.3f", iob)), \(String(format: "%.3f", cob)), \(String(format: "%.3f", bgTrend)), \(String(format: "%.3f", hrTrend)), \(String(format: "%.3f", hourSin)), \(String(format: "%.3f", hourCos))]")
         
         return inputTensor
     }
@@ -452,13 +459,23 @@ class BGPredictionService: ObservableObject {
                 heartRate: heartRate
             )
             
-            // Run all models in series and log their predictions
-            await SeriesPredictionService.shared.runSeriesPredictions(
+            // Run all models in series and capture their predictions
+            let modelPredictions = await SeriesPredictionService.shared.runSeriesPredictions(
                 window: inputTensor,
                 currentBG: currentGlucose,
                 usedMgdl: true,
                 modelContext: modelContext
             )
+            
+            // Update Model 6 prediction if available
+            if let model6Result = modelPredictions[6] {
+                // Since we're already in a @MainActor context, we can update directly
+                // Use modelOutput which is always in mmol/L (not predictionValue which depends on usedMgdl)
+                self.lastModel6Prediction = model6Result.modelOutput
+                // Format for display (assuming we want both units available)
+                self.lastModel6PredictionText = String(format: "%.1f", model6Result.modelOutput)
+                print("🟣 Captured Model 6 prediction: \(model6Result.modelOutput) mmol/L")
+            }
         } catch {
             print("⚠️ Failed to run series predictions: \(error)")
         }
@@ -506,5 +523,80 @@ class BGPredictionService: ObservableObject {
     /// Request HealthKit authorization (should be called early in the app lifecycle)
     func requestHealthKitAuthorization() async throws {
         try await healthKitFeatureProvider.requestAuth()
+    }
+    
+    /// Create a prediction record and also return individual model predictions
+    /// - Parameter useMgdl: Whether to use mg/dL units (true) or mmol/L (false)
+    /// - Returns: A tuple containing the main Prediction and a dictionary of individual model predictions
+    @MainActor
+    func createPredictionWithModelResults(useMgdl: Bool, modelContext: ModelContext? = nil) async throws -> (prediction: Prediction, modelPredictions: [Int: Prediction]) {
+        // Get prediction from the forecasting algorithm (always returns mg/dL internally)
+        let (predictedValueMgdl, timestamp) = try await predictBloodGlucose()
+        
+        // Log both representations for debugging
+        print("🔍 Creating prediction record:")
+        print("  - Predicted mg/dL: \(String(format: "%.1f", predictedValueMgdl))")
+        print("  - Predicted mmol/L: \(String(format: "%.1f", predictedValueMgdl / 18.0))")
+        print("  - Storing in \(useMgdl ? "mg/dL" : "mmol/L") format")
+        
+        var modelPredictions: [Int: Prediction] = [:]
+        
+        // Run all 6 models and capture their predictions
+        do {
+            // Get current glucose and recent readings to build input for all models
+            let currentGlucose = try await healthKitFeatureProvider.fetchLatestGlucoseValue()
+            let recentGlucoseReadings = try await healthKitFeatureProvider.fetchRecentGlucoseValues(limit: 10)
+            let momentum = calculateMomentum(from: recentGlucoseReadings)
+            let iob = try await getInsulinOnBoard()
+            let cob = try await getCarbsOnBoard()
+            let timeOfDayFactor = getTimeOfDayFactor()
+            let heartRate = try await healthKitFeatureProvider.fetchLatestHeartRate(minutesBack: 30.0)
+            
+            // Build the input tensor (same as used for the main prediction)
+            let inputTensor = try buildInputTensor(
+                currentGlucose: currentGlucose,
+                recentReadings: recentGlucoseReadings,
+                iob: iob,
+                cob: cob,
+                momentum: momentum,
+                timeOfDayFactor: timeOfDayFactor,
+                heartRate: heartRate
+            )
+            
+            // Run all models in series and capture their predictions
+            modelPredictions = await SeriesPredictionService.shared.runSeriesPredictions(
+                window: inputTensor,
+                currentBG: currentGlucose,
+                usedMgdl: true,
+                modelContext: modelContext
+            )
+        } catch {
+            print("⚠️ Failed to run series predictions: \(error)")
+        }
+        
+        // Get current BG for reference
+        let currentBGInMgdl = try await healthKitFeatureProvider.fetchLatestGlucoseValue()
+        let currentBGInMmol = currentBGInMgdl / 18.0
+        
+        // Calculate momentum for stability status
+        let recentReadings = try await healthKitFeatureProvider.fetchRecentGlucoseValues(limit: 3)
+        let momentum = calculateMomentum(from: recentReadings)
+        
+        // Determine stability status based on recent trend
+        let stabilityStatus = determineStabilityStatus(momentum: momentum)
+        
+        // Create the prediction object with all necessary fields
+        // If using mmol/L, convert the prediction from mg/dL to mmol/L
+        let finalPredictionValue = useMgdl ? predictedValueMgdl : (predictedValueMgdl / 18.0)
+        
+        let prediction = Prediction(
+            timestamp: timestamp,
+            predictionValue: finalPredictionValue,
+            usedMgdlUnits: useMgdl,
+            currentBG: currentBGInMmol,
+            stabilityStatus: stabilityStatus
+        )
+        
+        return (prediction: prediction, modelPredictions: modelPredictions)
     }
 }

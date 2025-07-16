@@ -33,6 +33,7 @@ struct BGPredictionView: View {
     @StateObject private var predictionService = BGPredictionService()
     @StateObject private var hk = HealthKitFeatureProvider()
     @State private var predictText = "—"
+    @State private var model6Text: String = "—"
     @AppStorage("useMgdlUnits") private var useMgdlUnits = true
     @State private var lastGlucoseReading: Double = 0.0  // Track previous reading
     @State private var lastReadingTimestamp: Date? = nil  // When the reading was taken
@@ -50,6 +51,15 @@ struct BGPredictionView: View {
                     .font(.headline)
                 Text(predictText)
                     .font(.system(size: 64, weight: .bold, design: .rounded))
+                
+                VStack(spacing: 4) {
+                    Text(useMgdlUnits ? "rangeupto6_tcn Prediction (mg/dL)" : "rangeupto6_tcn Prediction (mmol/L)")
+                        .font(.subheadline)
+                    Text(model6Text)
+                        .font(.title2)
+                        .foregroundStyle(.purple)
+                }
+                
                 HStack {
                     Button("Predict") { Task { await predict() } }
                         .buttonStyle(.borderedProminent)
@@ -134,7 +144,7 @@ struct BGPredictionView: View {
     @MainActor
     private func predict() async {
         do {
-            // Use the prediction service to get a prediction
+            // Use the prediction service to get a prediction (this will also update Model 6 prediction)
             let prediction = try await predictionService.createPredictionRecord(useMgdl: useMgdlUnits, modelContext: modelContext)
             
             // Get the current blood glucose value
@@ -147,7 +157,7 @@ struct BGPredictionView: View {
             // Get the prediction value (already in the correct units based on useMgdl parameter)
             let predictedBG = prediction.predictionValue
             
-            // Format and display the result (no additional conversion needed)
+            // Format and display the main prediction result (no additional conversion needed)
             if useMgdlUnits {
                 // Already in mg/dL from the prediction service
                 predictText = String(format: "%.0f", predictedBG)
@@ -156,11 +166,28 @@ struct BGPredictionView: View {
                 predictText = String(format: "%.1f", predictedBG)
             }
             
+            // Update Model 6 prediction display from predictionService
+            if predictionService.lastModel6Prediction > 0 {
+                // Model 6 prediction is available
+                if useMgdlUnits {
+                    // Convert from mmol/L to mg/dL for display
+                    model6Text = String(format: "%.0f", predictionService.lastModel6Prediction * 18.0)
+                } else {
+                    // Display in mmol/L
+                    model6Text = String(format: "%.1f", predictionService.lastModel6Prediction)
+                }
+                print("🟣 Model 6 Display: \(model6Text) \(useMgdlUnits ? "mg/dL" : "mmol/L")")
+            } else {
+                model6Text = "—"
+                print("⚠️ Model 6 prediction not available")
+            }
+            
             // Log for debugging
             print("📊 Displaying prediction: \(predictText) \(useMgdlUnits ? "mg/dL" : "mmol/L")")
             
             // Save the prediction to SwiftData
             modelContext.insert(prediction)
+
             
             // This try-catch block ensures we capture any persistence errors
             do {
@@ -175,6 +202,7 @@ struct BGPredictionView: View {
             }
         } catch {
             predictText = "Err"
+            model6Text = "Err"
             print("❌ predict failed:", error)
         }
     }
@@ -481,3 +509,4 @@ class ContentViewModel: ObservableObject {
         self.modelContext = context
     }
 }
+
