@@ -33,7 +33,11 @@ struct BGPredictionView: View {
     @StateObject private var predictionService = BGPredictionService()
     @StateObject private var hk = HealthKitFeatureProvider()
     @State private var predictText = "—"
-    @State private var model6Text: String = "—"
+    @State private var wavenet1Text: String = "—"
+    @State private var wavenet2Text: String = "—"
+    @State private var wavenet3Text: String = "—"
+    @State private var wavenet4Text: String = "—"
+    @State private var wavenet5Text: String = "—"
     @AppStorage("useMgdlUnits") private var useMgdlUnits = true
     @State private var lastGlucoseReading: Double = 0.0  // Track previous reading
     @State private var lastReadingTimestamp: Date? = nil  // When the reading was taken
@@ -42,6 +46,7 @@ struct BGPredictionView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Prediction.timestamp, order: .reverse) private var predictions: [Prediction]
     @State private var refreshID = UUID() // Track when to refresh predictions
+    @State private var isRefreshing = false // Track refresh status
 
     var body: some View {
         VStack(spacing: 24) {
@@ -52,12 +57,73 @@ struct BGPredictionView: View {
                 Text(predictText)
                     .font(.system(size: 64, weight: .bold, design: .rounded))
                 
-                VStack(spacing: 4) {
-                    Text(useMgdlUnits ? "rangeupto6_tcn Prediction (mg/dL)" : "rangeupto6_tcn Prediction (mmol/L)")
-                        .font(.subheadline)
-                    Text(model6Text)
-                        .font(.title2)
-                        .foregroundStyle(.purple)
+                // WaveNet Models Grid
+                VStack(spacing: 8) {
+                    Text("WaveNet Model Predictions")
+                        .font(.headline)
+                        .padding(.bottom, 4)
+                    
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
+                        VStack(spacing: 4) {
+                            Text("WaveNet1")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(wavenet1Text)
+                                .font(.title3)
+                                .foregroundStyle(.blue)
+                        }
+                        .padding(8)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(8)
+                        
+                        VStack(spacing: 4) {
+                            Text("WaveNet2")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(wavenet2Text)
+                                .font(.title3)
+                                .foregroundStyle(.green)
+                        }
+                        .padding(8)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(8)
+                        
+                        VStack(spacing: 4) {
+                            Text("WaveNet3")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(wavenet3Text)
+                                .font(.title3)
+                                .foregroundStyle(.orange)
+                        }
+                        .padding(8)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(8)
+                        
+                        VStack(spacing: 4) {
+                            Text("WaveNet4")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(wavenet4Text)
+                                .font(.title3)
+                                .foregroundStyle(.red)
+                        }
+                        .padding(8)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(8)
+                        
+                        VStack(spacing: 4) {
+                            Text("WaveNet5")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(wavenet5Text)
+                                .font(.title3)
+                                .foregroundStyle(.purple)
+                        }
+                        .padding(8)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(8)
+                    }
                 }
                 
                 HStack {
@@ -72,15 +138,35 @@ struct BGPredictionView: View {
             
             // Prediction history section
             VStack(alignment: .leading, spacing: 8) {
-                Text("Prediction History")
-                    .font(.headline)
-                    .padding(.bottom, 4)
+                HStack {
+                    Text("Prediction History")
+                        .font(.headline)
+                    
+                    Spacer()
+                    
+                    // Manual refresh button
+                    Button(action: {
+                        refreshPredictionHistory()
+                    }) {
+                        Image(systemName: "arrow.clockwise")
+                            .foregroundColor(.blue)
+                    }
+                    .disabled(isRefreshing)
+                }
+                .padding(.bottom, 4)
                 
                 if predictions.isEmpty {
-                    Text("No predictions yet")
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding()
+                    VStack(spacing: 8) {
+                        Text("No predictions yet")
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        
+                        if isRefreshing {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        }
+                    }
+                    .padding()
                 } else {
                     // Header row
                     HStack {
@@ -90,11 +176,14 @@ struct BGPredictionView: View {
                         Text(useMgdlUnits ? "Value (mg/dL)" : "Value (mmol/L)")
                             .fontWeight(.medium)
                             .frame(width: 80, alignment: .trailing)
+                        Text("Type")
+                            .fontWeight(.medium)
+                            .frame(width: 40, alignment: .trailing)
                     }
                     .padding(.horizontal, 8)
                     .font(.caption)
                     
-                    // Prediction list - will refresh when refreshID changes
+                    // Prediction list with pull-to-refresh
                     ScrollView {
                         LazyVStack(spacing: 4) {
                             ForEach(predictions) { prediction in
@@ -107,15 +196,30 @@ struct BGPredictionView: View {
                                          String(format: "%.0f", prediction.predictionValueInMgdl) : 
                                          String(format: "%.1f", prediction.predictionValueInMmol))
                                         .frame(width: 80, alignment: .trailing)
+                                        .fontWeight(prediction.isAveragePrediction ? .bold : .regular)
+                                    
+                                    // Show model type or average indicator
+                                    Text(prediction.isAveragePrediction ? "AVG" : 
+                                         prediction.modelIndex > 0 ? "M\(prediction.modelIndex)" : "")
+                                        .font(.caption)
+                                        .foregroundStyle(prediction.isAveragePrediction ? .blue : .secondary)
+                                        .frame(width: 40, alignment: .trailing)
                                 }
                                 .padding(.vertical, 4)
                                 .padding(.horizontal, 8)
-                                .background(Color(.systemBackground))
+                                .background(
+                                    prediction.isAveragePrediction ? 
+                                    Color(.systemBlue).opacity(0.1) : 
+                                    Color(.systemBackground)
+                                )
                                 .cornerRadius(4)
                                 .id(prediction.id) // Ensure each row has unique ID
                             }
                         }
                         .id(refreshID) // Force refresh when this ID changes
+                    }
+                    .refreshable {
+                        await refreshPredictionHistory()
                     }
                     .frame(maxHeight: 200)
                     .background(Color(.systemGray6))
@@ -144,70 +248,197 @@ struct BGPredictionView: View {
     @MainActor
     private func predict() async {
         do {
-            // Use the prediction service to get a prediction (this will also update Model 6 prediction)
-            let prediction = try await predictionService.createPredictionRecord(useMgdl: useMgdlUnits, modelContext: modelContext)
+            // Get current blood glucose using the correct method
+            let currentBG = try await hk.fetchLatestGlucoseValue()
+            let currentBGValue = useMgdlUnits ? currentBG : (currentBG / 18.0)
             
-            // Get the current blood glucose value
-            let currentBG = prediction.currentBG  // Already in mmol/L
-            
-            // Update our tracking for trend calculation next time
-            lastGlucoseReading = currentBG
+            // Update our tracking for trend calculation
+            lastGlucoseReading = currentBGValue
             lastReadingTimestamp = Date()
             
-            // Get the prediction value (already in the correct units based on useMgdl parameter)
-            let predictedBG = prediction.predictionValue
+            // Get heart rate
+            let heartRate = try await hk.fetchLatestHeartRate()
             
-            // Format and display the main prediction result (no additional conversion needed)
+            // Build input tensor using BGPredictionService's buildWindow method
+            let inputTensor = try await hk.buildWindow()
+            
+            // Run all 5 WaveNet models through SeriesPredictionService
+            // Note: currentBG from HealthKit is always in mg/dL, so we always pass usedMgdl: true
+            let modelPredictions = await SeriesPredictionService.shared.runSeriesPredictions(
+                window: inputTensor,
+                currentBG: currentBG,
+                usedMgdl: true,  // HealthKit always returns mg/dL
+                modelContext: modelContext
+            )
+            
+            // Update individual WaveNet model displays
+            updateWaveNetDisplays(predictions: modelPredictions)
+            
+            // Calculate average prediction (in mmol/L)
+            let avgPredictionMmol = calculateAveragePrediction(predictions: modelPredictions)
+            let avgPredictionMgdl = avgPredictionMmol * 18.0
+            
+            // Display the average prediction in the UI
             if useMgdlUnits {
-                // Already in mg/dL from the prediction service
-                predictText = String(format: "%.0f", predictedBG)
+                predictText = String(format: "%.0f", avgPredictionMgdl)
             } else {
-                // Already in mmol/L from the prediction service
-                predictText = String(format: "%.1f", predictedBG)
+                predictText = String(format: "%.1f", avgPredictionMmol)
             }
             
-            // Update Model 6 prediction display from predictionService
-            if predictionService.lastModel6Prediction > 0 {
-                // Model 6 prediction is available
-                if useMgdlUnits {
-                    // Convert from mmol/L to mg/dL for display
-                    model6Text = String(format: "%.0f", predictionService.lastModel6Prediction * 18.0)
-                } else {
-                    // Display in mmol/L
-                    model6Text = String(format: "%.1f", predictionService.lastModel6Prediction)
-                }
-                print("🟣 Model 6 Display: \(model6Text) \(useMgdlUnits ? "mg/dL" : "mmol/L")")
-            } else {
-                model6Text = "—"
-                print("⚠️ Model 6 prediction not available")
+            // Calculate stability status for the average prediction
+            let recentReadings = try await hk.fetchRecentGlucoseValues(limit: 3)
+            let momentum = calculateMomentum(from: recentReadings)
+            let stabilityStatus = determineStabilityStatus(momentum: momentum)
+            
+            // Create and save the average prediction as a SwiftData object
+            let timestamp = Date()
+            let averagePrediction = Prediction(
+                timestamp: timestamp,
+                predictionValue: useMgdlUnits ? avgPredictionMgdl : avgPredictionMmol,
+                usedMgdlUnits: useMgdlUnits,
+                currentBG: currentBG / 18.0, // Always store currentBG in mmol/L
+                stabilityStatus: stabilityStatus,
+                modelOutput: avgPredictionMmol, // Always store modelOutput in mmol/L
+                modelPredictedChange: 0.0,
+                observedTrend: 0.0,
+                modelWeight: 0.0,
+                trendWeight: 0.0,
+                finalPredictedChange: 0.0,
+                actualBG: 0.0,
+                actualBGTimestamp: nil,
+                modelIndex: 0, // 0 indicates this is an average prediction
+                isAveragePrediction: true,
+                note: "Average of \(modelPredictions.count) WaveNet models"
+            )
+            
+            // Save to SwiftData
+            modelContext.insert(averagePrediction)
+            
+            // Try to save the context to ensure data persistence
+            do {
+                try modelContext.save()
+                print("✅ Successfully saved average prediction to database")
+            } catch {
+                print("❌ Failed to save SwiftData context: \(error)")
             }
             
             // Log for debugging
-            print("📊 Displaying prediction: \(predictText) \(useMgdlUnits ? "mg/dL" : "mmol/L")")
+            print("📊 Created average prediction: \(predictText) \(useMgdlUnits ? "mg/dL" : "mmol/L")")
+            print("📊 Average prediction ID: \(averagePrediction.id)")
+            print("📊 Total predictions in database: \(predictions.count)")
             
-            // Save the prediction to SwiftData
-            modelContext.insert(prediction)
-
+            // Force UI refresh by updating the refreshID
+            self.refreshID = UUID()
+            print("UI refresh triggered")
             
-            // This try-catch block ensures we capture any persistence errors
-            do {
-                try modelContext.save()
-                print("✅ Prediction saved successfully")
-                
-                // Force UI refresh by updating the refreshID
-                self.refreshID = UUID()
-                print("UI refresh triggered")
-            } catch {
-                print("❌ Error saving prediction: \(error)")
-            }
         } catch {
             predictText = "Err"
-            model6Text = "Err"
+            wavenet1Text = "Err"
+            wavenet2Text = "Err"
+            wavenet3Text = "Err"
+            wavenet4Text = "Err"
+            wavenet5Text = "Err"
             print("❌ predict failed:", error)
         }
     }
-
-    // Personalization function removed as we're using the pre-trained model directly
+    
+    private func updateWaveNetDisplays(predictions: [Int: Prediction]) {
+        // Update each WaveNet model display
+        if let prediction1 = predictions[1] {
+            wavenet1Text = useMgdlUnits ? 
+                String(format: "%.0f", prediction1.modelOutput * 18.0) : 
+                String(format: "%.1f", prediction1.modelOutput)
+        } else {
+            wavenet1Text = "—"
+        }
+        
+        if let prediction2 = predictions[2] {
+            wavenet2Text = useMgdlUnits ? 
+                String(format: "%.0f", prediction2.modelOutput * 18.0) : 
+                String(format: "%.1f", prediction2.modelOutput)
+        } else {
+            wavenet2Text = "—"
+        }
+        
+        if let prediction3 = predictions[3] {
+            wavenet3Text = useMgdlUnits ? 
+                String(format: "%.0f", prediction3.modelOutput * 18.0) : 
+                String(format: "%.1f", prediction3.modelOutput)
+        } else {
+            wavenet3Text = "—"
+        }
+        
+        if let prediction4 = predictions[4] {
+            wavenet4Text = useMgdlUnits ? 
+                String(format: "%.0f", prediction4.modelOutput * 18.0) : 
+                String(format: "%.1f", prediction4.modelOutput)
+        } else {
+            wavenet4Text = "—"
+        }
+        
+        if let prediction5 = predictions[5] {
+            wavenet5Text = useMgdlUnits ? 
+                String(format: "%.0f", prediction5.modelOutput * 18.0) : 
+                String(format: "%.1f", prediction5.modelOutput)
+        } else {
+            wavenet5Text = "—"
+        }
+    }
+    
+    private func calculateAveragePrediction(predictions: [Int: Prediction]) -> Double {
+        let validPredictions = predictions.values.compactMap { $0.modelOutput }
+        guard !validPredictions.isEmpty else { return 0.0 }
+        
+        let sum = validPredictions.reduce(0.0, +)
+        return sum / Double(validPredictions.count)
+    }
+    
+    // Helper method to calculate glucose momentum (trend)
+    private func calculateMomentum(from readings: [Double]) -> Double {
+        guard readings.count >= 2 else { return 0.0 }
+        
+        // Calculate the rate of change between the most recent readings
+        let recent = readings[0]
+        let previous = readings[1]
+        
+        // Return change in mg/dL per minute (approximate)
+        return (recent - previous) / 5.0 // Assuming 5-minute intervals
+    }
+    
+    // Helper method to determine stability status based on momentum
+    private func determineStabilityStatus(momentum: Double) -> String {
+        let threshold = 1.0 // mg/dL per minute
+        
+        if abs(momentum) < threshold {
+            return "STABLE"
+        } else if momentum > 0 {
+            return "RISING"
+        } else {
+            return "FALLING"
+        }
+    }
+    
+    // Method to refresh prediction history (both manual and pull-to-refresh)
+    private func refreshPredictionHistory() async {
+        isRefreshing = true
+        
+        // Force UI refresh by updating the refreshID
+        refreshID = UUID()
+        
+        // Add a small delay to show the refresh indicator
+        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+        
+        print("🔄 Prediction history refreshed - Total predictions: \(predictions.count)")
+        
+        isRefreshing = false
+    }
+    
+    // Synchronous version for button tap
+    private func refreshPredictionHistory() {
+        Task {
+            await refreshPredictionHistory()
+        }
+    }
 }
 
 // MARK: - Settings & Nightscout Sync
@@ -355,7 +586,7 @@ struct SettingsView: View {
                         viewModel.syncInProgress = true
                         
                         // Export stored predictions to CSV (with actual BG matching)
-                        let fileURL = try await CSVExportManager.shared.exportStoredPredictions(predictions: multiModelPredictions)
+                        let fileURL = try await CSVExportManager.shared.exportStoredPredictions(predictions: multiModelPredictions, modelContext: modelContext)
                         
                         // Store URL for sharing
                         csvURL = fileURL

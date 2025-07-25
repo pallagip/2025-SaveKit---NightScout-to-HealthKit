@@ -32,6 +32,10 @@ final class MultiModelPrediction {
     var m6_pred_mmol: Double = 0.0
     var m6_pred_mgdl: Int = 0
     
+    // Average prediction (calculated from all 6 models)
+    var avg_pred_mmol: Double = 0.0
+    var avg_pred_mgdl: Int = 0
+    
     // Actual blood glucose reading ~20 minutes after prediction
     var actualBG_mmol: Double = 0.0
     var actualBG_mgdl: Int = 0
@@ -69,6 +73,18 @@ final class MultiModelPrediction {
             m6_pred_mgdl = mgdl
         default:
             break
+        }
+    }
+    
+    // Helper method to calculate and set average prediction from all 6 models
+    func calculateAndSetAveragePrediction() {
+        let predictions = [m1_pred_mmol, m2_pred_mmol, m3_pred_mmol, m4_pred_mmol, m5_pred_mmol, m6_pred_mmol]
+        let validPredictions = predictions.filter { $0 > 0.0 }
+        
+        if !validPredictions.isEmpty {
+            let averageMmol = validPredictions.reduce(0.0, +) / Double(validPredictions.count)
+            self.avg_pred_mmol = averageMmol
+            self.avg_pred_mgdl = Int(round(averageMmol * 18.0))
         }
     }
     

@@ -156,37 +156,73 @@ final class HealthKitFeatureProvider: ObservableObject {
                                                        deliveryReason: .bolus))
         }
         
-        // Calculate active insulin with longer history
-        func calculateActiveInsulin(doses: [Double], λ: Double = 0.028) -> Double {
-            // Exponential decay model for insulin (λ = 0.028 h⁻¹)
-            var activeInsulin = 0.0
-            for (index, dose) in doses.enumerated() {
-                // Calculate time since dose in hours (15-minute intervals)
-                let timeInHours = Double(doses.count - 1 - index) * (15.0 / 60.0)
-                // Apply exponential decay
-                activeInsulin += dose * exp(-λ * timeInHours)
+        // Calculate active insulin from actual HealthKit insulin doses in 4-hour window
+        func calculateActiveInsulinFromHealthKit() async throws -> Double {
+            let insulinType = HKQuantityType.quantityType(forIdentifier: .insulinDelivery)!
+            let fourHoursAgo = Calendar.current.date(byAdding: .hour, value: -4, to: now)!
+            let predicate = HKQuery.predicateForSamples(withStart: fourHoursAgo, end: now, options: .strictEndDate)
+            
+            let insulinSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(sampleType: insulinType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: samples as? [HKQuantitySample] ?? [])
+                    }
+                }
+                store.execute(query)
             }
-            return activeInsulin
+            
+            var totalActiveInsulin = 0.0
+            for sample in insulinSamples {
+                let doseUnits = sample.quantity.doubleValue(for: HKUnit.internationalUnit())
+                let hoursAgo = now.timeIntervalSince(sample.startDate) / 3600.0
+                
+                // Insulin activity factor using exponential decay (4-hour duration)
+                let activityFactor = max(0.0, exp(-hoursAgo / 1.5)) // 1.5h time constant
+                totalActiveInsulin += doseUnits * activityFactor
+                
+                print("    → Insulin: \(String(format: "%.2f", doseUnits))U at \(String(format: "%.1f", hoursAgo))h ago, activity: \(String(format: "%.3f", activityFactor))")
+            }
+            
+            return totalActiveInsulin
         }
         
-        // Calculate active carbs with longer history
-        func calculateActiveCarbs(doses: [Double], λ: Double = 0.028) -> Double {
-            // Similar exponential decay model for carbs
-            var activeCarbs = 0.0
-            for (index, dose) in doses.enumerated() {
-                // Calculate time since intake in hours (15-minute intervals)
-                let timeInHours = Double(doses.count - 1 - index) * (15.0 / 60.0)
-                // Apply exponential decay
-                activeCarbs += dose * exp(-λ * timeInHours)
+        // Calculate active carbs from actual HealthKit carb entries in 3-hour window
+        func calculateActiveCarbsFromHealthKit() async throws -> Double {
+            let carbType = HKQuantityType.quantityType(forIdentifier: .dietaryCarbohydrates)!
+            let threeHoursAgo = Calendar.current.date(byAdding: .hour, value: -3, to: now)!
+            let predicate = HKQuery.predicateForSamples(withStart: threeHoursAgo, end: now, options: .strictEndDate)
+            
+            let carbSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(sampleType: carbType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: samples as? [HKQuantitySample] ?? [])
+                    }
+                }
+                store.execute(query)
             }
-            return activeCarbs
+            
+            var totalActiveCarbs = 0.0
+            for sample in carbSamples {
+                let carbGrams = sample.quantity.doubleValue(for: HKUnit.gram())
+                let hoursAgo = now.timeIntervalSince(sample.startDate) / 3600.0
+                
+                // Carb absorption factor using exponential decay (3-hour duration)
+                let absorptionFactor = max(0.0, exp(-hoursAgo / 1.0)) // 1.0h time constant
+                totalActiveCarbs += carbGrams * absorptionFactor
+                
+                print("    → Carbs: \(String(format: "%.1f", carbGrams))g at \(String(format: "%.1f", hoursAgo))h ago, absorption: \(String(format: "%.3f", absorptionFactor))")
+            }
+            
+            return totalActiveCarbs
         }
         
-        // Calculate total active insulin from extended history
-        let totalActiveInsulin = calculateActiveInsulin(doses: extendedBolusDose)
-        
-        // Calculate total active carbs from extended history
-        let totalActiveCarbs = calculateActiveCarbs(doses: extendedCarbsDose)
+        // Calculate total active insulin and carbs using new HealthKit-based methods
+        let totalActiveInsulin = try await calculateActiveInsulinFromHealthKit()
+        let totalActiveCarbs = try await calculateActiveCarbsFromHealthKit()
         
         // Combine recent data with extended history calculations
         // Convert bolus + carbs to active / operative via e-decay for recent data
@@ -217,19 +253,66 @@ final class HealthKitFeatureProvider: ObservableObject {
         actIns = expDecay(actIns)
         opCarbs = expDecay(opCarbs)
         
-        // ---- to MLMultiArray -------------------------------------------------
-        let x = try MLMultiArray(shape: [1, 8, 4], dataType: .float32)
+        // ---- to MLMultiArray with correct shape [1, 24, 8] -------------------------------------------------
+        print("🔍 HealthKitFeatureProvider: Creating tensor with shape [1, 24, 8]")
+        let x = try MLMultiArray(shape: [1, 24, 8], dataType: .float32)
+        
+        // Apply reasonable bounds to prevent unrealistic values
+        let boundedIOB = max(0.0, min(10.0, totalActiveInsulin))
+        let boundedCOB = max(0.0, min(100.0, totalActiveCarbs))
+        
+        // Extend arrays to 24 time steps by padding with last values
+        let extendedHR = hr + Array(repeating: hr.last ?? 70.0, count: max(0, 24 - hr.count))
+        let extendedBG = bg + Array(repeating: bg.last ?? 100.0, count: max(0, 24 - bg.count))
+        // Use bounded values for IOB/COB instead of original arrays
+        let extendedActIns = Array(repeating: boundedIOB / 24.0, count: 24) // Distribute bounded IOB across time steps
+        let extendedOpCarbs = Array(repeating: boundedCOB / 24.0, count: 24) // Distribute bounded COB across time steps
+        
+        // Fill tensor with 24 time steps and 8 features each
+        // Feature order matches training: blood_glucose, insulin_dose, dietary_carbohydrates, heart_rate, bg_trend, hr_trend, hour_sin, hour_cos
         var idx = 0
-        for t in 0..<8 {
-            x[idx] = NSNumber(value: hr[t]);         idx += 1
-            x[idx] = NSNumber(value: bg[t]);         idx += 1
-            x[idx] = NSNumber(value: actIns[t]);     idx += 1
-            x[idx] = NSNumber(value: opCarbs[t]);    idx += 1
+        for t in 0..<24 {
+            // Feature 0: blood_glucose (convert to mmol/L)
+            let bgMmol = extendedBG[min(t, extendedBG.count-1)] / 18.0
+            x[idx] = NSNumber(value: bgMmol); idx += 1
+            
+            // Feature 1: insulin_dose (active insulin)
+            x[idx] = NSNumber(value: extendedActIns[min(t, extendedActIns.count-1)]); idx += 1
+            
+            // Feature 2: dietary_carbohydrates (operative carbs)
+            x[idx] = NSNumber(value: extendedOpCarbs[min(t, extendedOpCarbs.count-1)]); idx += 1
+            
+            // Feature 3: heart_rate (normalized)
+            let normalizedHR = (extendedHR[min(t, extendedHR.count-1)] - 70.0) / 30.0
+            x[idx] = NSNumber(value: normalizedHR); idx += 1
+            
+            // Feature 4: bg_trend (simplified)
+            let bgTrend = t > 0 ? (extendedBG[min(t, extendedBG.count-1)] - extendedBG[min(t-1, extendedBG.count-1)]) / 18.0 / 5.0 : 0.0
+            x[idx] = NSNumber(value: bgTrend); idx += 1
+            
+            // Feature 5: hr_trend (simplified)
+            let hrTrend = t > 0 ? (extendedHR[min(t, extendedHR.count-1)] - extendedHR[min(t-1, extendedHR.count-1)]) / 5.0 : 0.0
+            x[idx] = NSNumber(value: hrTrend); idx += 1
+            
+            // Feature 6: hour_sin (circadian)
+            let hour = Double(Calendar.current.component(.hour, from: Date()))
+            let hourFraction = hour + Double(Calendar.current.component(.minute, from: Date())) / 60.0
+            let hourSin = sin(2.0 * .pi * hourFraction / 24.0)
+            x[idx] = NSNumber(value: hourSin); idx += 1
+            
+            // Feature 7: hour_cos (circadian)
+            let hourCos = cos(2.0 * .pi * hourFraction / 24.0)
+            x[idx] = NSNumber(value: hourCos); idx += 1
         }
         
+        // Verify final tensor shape
+        let finalShape = x.shape.map { $0.intValue }
+        print("🔍 HealthKitFeatureProvider: Final tensor shape: \(finalShape)")
+        print("🔍 HealthKitFeatureProvider: Tensor element count: \(x.count)")
+        
         print("🔄 Insulin considered from the last 4 hours, carbs from the last 3 hours")
-        print("💉 Total active insulin: \(String(format: "%.2f", totalActiveInsulin)) IU")
-        print("🍞 Total active carbs: \(String(format: "%.2f", totalActiveCarbs)) g")
+        print("💉 Total active insulin: \(String(format: "%.2f", totalActiveInsulin)) IU (bounded: \(String(format: "%.2f", boundedIOB)) IU)")
+        print("🍞 Total active carbs: \(String(format: "%.2f", totalActiveCarbs)) g (bounded: \(String(format: "%.1f", boundedCOB)) g)")
         
         return x
     }

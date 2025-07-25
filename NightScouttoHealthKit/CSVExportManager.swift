@@ -12,27 +12,26 @@ class CSVExportManager {
     // MARK: - Constants
     private let mmolToMgdl: Double = 18.0
     
-    // MARK: - ISO-8601 formatter (UTC, no fractional seconds)
+    // MARK: - ISO-8601 formatter (Central European Time, no fractional seconds)
     private let timestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withColonSeparatorInTime]
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)!
+        formatter.timeZone = TimeZone(identifier: "Europe/Berlin") ?? TimeZone(secondsFromGMT: 3600)!
         return formatter
     }()
     
     // MARK: - Model Color Map
-    // Model 1 coloring is defined but CSV export uses only models 2–6
-    private let modelColorMap: [String: [String: String]] = [
-        "M1": ["base": "#DC143C", "mmol": "#F37C94", "mgdl": "#AD102F"],
-        "M2": ["base": "#008080", "mmol": "#00B3B3", "mgdl": "#004D4D"],
-        "M3": ["base": "#FFBF00", "mmol": "#FFDF80", "mgdl": "#CC9900"],
-        "M4": ["base": "#8A2BE2", "mmol": "#C89BF1", "mgdl": "#701AC0"],
-        "M5": ["base": "#32CD32", "mmol": "#98E698", "mgdl": "#28A428"],
-        "M6": ["base": "#FFA500", "mmol": "#FFD580", "mgdl": "#CC8400"] // Added M6 to align with requested models 2-6
+    // Color scheme for WaveNet models 1-5 in CSV visualization
+    private let modelColors: [String: [String: String]] = [
+        "WaveNet1": ["base": "#007AFF", "mmol": "#66B3FF", "mgdl": "#0056CC"], // Blue
+        "WaveNet2": ["base": "#34C759", "mmol": "#7DD87F", "mgdl": "#28A745"], // Green
+        "WaveNet3": ["base": "#FF9500", "mmol": "#FFB84D", "mgdl": "#CC7700"], // Orange
+        "WaveNet4": ["base": "#FF3B30", "mmol": "#FF7A73", "mgdl": "#CC2E26"], // Red
+        "WaveNet5": ["base": "#AF52DE", "mmol": "#C785E8", "mgdl": "#8C42B1"]  // Purple
     ]
     
     // MARK: - Public Entry Point
-    func exportStoredPredictions(predictions: [MultiModelPrediction]) async throws -> URL {
+    func exportStoredPredictions(predictions: [MultiModelPrediction], modelContext: ModelContext) async throws -> URL {
         let csvFilePath = getCSVFilePath()
         
         // First, try to match predictions with actual readings
@@ -46,30 +45,21 @@ class CSVExportManager {
         // Build CSV content
         var csvContent = header + "\r\n"
         
+        // Fetch average predictions from SwiftData
+        let averagePredictions = try fetchAveragePredictions(from: modelContext)
+        print("📊 Found \(averagePredictions.count) average predictions in SwiftData")
+        
         for prediction in predictions.sorted(by: { $0.timestamp < $1.timestamp }) {
             let isoTimestamp = timestampFormatter.string(from: prediction.timestamp)
             var csvLine = isoTimestamp
             
-            // Build model data array for models 2 to 6
-            // Note: Model 1 data export is commented out; uncomment to enable model 1 export
-            
-            /*
-            // Model 1 data (commented out)
-            let model1Data = (prediction.m1_pred_mmol, prediction.m1_pred_mgdl)
-            let currentBG_mmol_1 = String(format: "%.2f", prediction.currentBG_mmol)
-            let currentBG_mgdl_1 = String(prediction.currentBG_mgdl)
-            let pred_mmol_1 = String(format: "%.2f", model1Data.0)
-            let pred_mgdl_1 = String(model1Data.1)
-            csvLine += ",\(currentBG_mmol_1),\(currentBG_mgdl_1),\(pred_mmol_1),\(pred_mgdl_1)"
-            */
-            
-            // Models 2-6 data
+            // WaveNet models 1-5 data
             let modelData = [
+                (prediction.m1_pred_mmol, prediction.m1_pred_mgdl),
                 (prediction.m2_pred_mmol, prediction.m2_pred_mgdl),
                 (prediction.m3_pred_mmol, prediction.m3_pred_mgdl),
                 (prediction.m4_pred_mmol, prediction.m4_pred_mgdl),
-                (prediction.m5_pred_mmol, prediction.m5_pred_mgdl),
-                (prediction.m6_pred_mmol, prediction.m6_pred_mgdl) // assuming m6_pred_mmol, m6_pred_mgdl exist on MultiModelPrediction
+                (prediction.m5_pred_mmol, prediction.m5_pred_mgdl)
             ]
             
             for (predMmol, predMgdl) in modelData {
@@ -79,6 +69,15 @@ class CSVExportManager {
                 let pred_mgdl = String(predMgdl)
                 
                 csvLine += ",\(currentBG_mmol),\(currentBG_mgdl),\(pred_mmol),\(pred_mgdl)"
+            }
+            
+            // Add average prediction data (find matching timestamp within 30 seconds)
+            if let avgPrediction = findMatchingAveragePrediction(for: prediction.timestamp, in: averagePredictions) {
+                let avgPred_mmol = String(format: "%.2f", avgPrediction.predictionValue)
+                let avgPred_mgdl = String(Int(round(avgPrediction.predictionValue * 18.0)))
+                csvLine += ",\(avgPred_mmol),\(avgPred_mgdl)"
+            } else {
+                csvLine += ",," // Empty values if no average prediction found
             }
             
             // Add actual BG reading (20 minutes after prediction)
@@ -103,27 +102,23 @@ class CSVExportManager {
     // MARK: - Helper Functions
     
     private func createCSVHeader() -> String {
-        var columns: [String] = ["Timestamp_UTC"]
+        var columns: [String] = ["Timestamp_CET"]
         
-        // Comment out Model 1 columns, uncomment to enable Model 1 CSV export
-        /*
-        columns += [
-            "M1_Current_BG_mmol",
-            "M1_Current_BG_mgdl",
-            "M1_Pred_20min_mmol",
-            "M1_Pred_20min_mgdl"
-        ]
-        */
-        
-        // Add columns for models 2-6
-        for modelNum in 2...6 {
+        // Add columns for WaveNet models 1-5
+        for modelNum in 1...5 {
             columns += [
-                "M\(modelNum)_Current_BG_mmol",
-                "M\(modelNum)_Current_BG_mgdl",
-                "M\(modelNum)_Pred_20min_mmol",
-                "M\(modelNum)_Pred_20min_mgdl"
+                "WaveNet\(modelNum)_Current_BG_mmol",
+                "WaveNet\(modelNum)_Current_BG_mgdl",
+                "WaveNet\(modelNum)_Pred_20min_mmol",
+                "WaveNet\(modelNum)_Pred_20min_mgdl"
             ]
         }
+        
+        // Add average prediction columns
+        columns += [
+            "Average_Pred_20min_mmol",
+            "Average_Pred_20min_mgdl"
+        ]
         
         // Add actual BG columns at the end
         columns += [
@@ -138,10 +133,29 @@ class CSVExportManager {
         return documentsDirectory.appendingPathComponent("predictions.csv")
     }
     
+    // MARK: - Average Prediction Helpers
+    
+    private func fetchAveragePredictions(from modelContext: ModelContext) throws -> [Prediction] {
+        let descriptor = FetchDescriptor<Prediction>(
+            predicate: #Predicate<Prediction> { prediction in
+                prediction.isAveragePrediction == true
+            },
+            sortBy: [SortDescriptor(\Prediction.timestamp, order: .forward)]
+        )
+        return try modelContext.fetch(descriptor)
+    }
+    
+    private func findMatchingAveragePrediction(for timestamp: Date, in averagePredictions: [Prediction]) -> Prediction? {
+        // Find average prediction within 30 seconds of the MultiModelPrediction timestamp
+        return averagePredictions.first { avgPrediction in
+            abs(avgPrediction.timestamp.timeIntervalSince(timestamp)) <= 30.0
+        }
+    }
+    
     // MARK: - Color Map Access
     
     func getColorMap() -> [String: [String: String]] {
-        return modelColorMap
+        return modelColors
     }
     
     // MARK: - File Access
@@ -151,8 +165,4 @@ class CSVExportManager {
     }
 }
 
-// MARK: - Model Service Protocol
-
-protocol ModelService {
-    func predict(window: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction
-}
+// ModelService protocol is now imported from PredictionModel.swift

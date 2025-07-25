@@ -3,9 +3,10 @@ import SwiftData
 import CoreML
 import Accelerate
 
-// NOTE: Model 1 (BGTCNService) and all references to it have been commented out
-// because Core ML types for Model 1 are not present in this project.
-// The code is preserved here for future use when types become available.
+// Protocol definition for all model services
+protocol ModelService {
+    func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction
+}
 
 @Model
 final class Prediction: @unchecked Sendable, Identifiable, Hashable {
@@ -35,6 +36,11 @@ final class Prediction: @unchecked Sendable, Identifiable, Hashable {
     var actualBG: Double = 0.0         // Actual blood glucose value from HealthKit (mmol/L)
     var actualBGTimestamp: Date?       // When the actual reading was recorded
     
+    // New fields for identifying model types and average predictions
+    var modelIndex: Int = 0            // 0=average, 1-5=WaveNet models
+    var isAveragePrediction: Bool = false  // Flag to identify average predictions
+    var note: String = ""              // Additional metadata/notes about the prediction
+    
     init(timestamp: Date, 
          predictionValue: Double, 
          usedMgdlUnits: Bool, 
@@ -47,7 +53,10 @@ final class Prediction: @unchecked Sendable, Identifiable, Hashable {
          trendWeight: Double = 0,
          finalPredictedChange: Double = 0,
          actualBG: Double = 0,
-         actualBGTimestamp: Date? = nil) {
+         actualBGTimestamp: Date? = nil,
+         modelIndex: Int = 0,
+         isAveragePrediction: Bool = false,
+         note: String = "") {
         
         self.id = UUID()  // Generate unique ID for each instance
         self.timestamp = timestamp
@@ -63,6 +72,9 @@ final class Prediction: @unchecked Sendable, Identifiable, Hashable {
         self.finalPredictedChange = finalPredictedChange
         self.actualBG = actualBG
         self.actualBGTimestamp = actualBGTimestamp
+        self.modelIndex = modelIndex
+        self.isAveragePrediction = isAveragePrediction
+        self.note = note
     }
     
     // Helper to get formatted prediction value in the appropriate units
@@ -102,12 +114,11 @@ final class Prediction: @unchecked Sendable, Identifiable, Hashable {
     }
 }
 
-// MARK: - Model 1 Service (Original BGTCNService)
-/*
+// MARK: - Model 1 Service (WaveNet1)
 final class BGTCNService: ModelService {
     static let shared = BGTCNService()
 
-    private let model: rangeupto1_tcn  // auto‑generated Core ML class
+    private let model: MLModel  // Core ML model
     private let inputMean: [Float]
     private let inputStd: [Float]
     // Output scaling parameters for denormalization
@@ -116,8 +127,9 @@ final class BGTCNService: ModelService {
 
     private init() {
         // Load compiled model
-        guard let m = try? rangeupto1_tcn(configuration: MLModelConfiguration()) else {
-            fatalError("❌ Could not load rangeupto1_tcn.mlpackage")
+        guard let modelURL = Bundle.main.url(forResource: "wavenet1", withExtension: "mlpackage"),
+              let m = try? MLModel(contentsOf: modelURL) else {
+            fatalError("❌ Could not load wavenet1.mlpackage")
         }
         self.model = m
         
@@ -160,8 +172,8 @@ final class BGTCNService: ModelService {
         }
         
         // 2. Run prediction
-        let input = rangeupto1_tcnInput(input_1: raw)
-        let out   = try model.prediction(input: input)
+        let inputFeatures = try MLDictionaryFeatureProvider(dictionary: ["input_3": MLFeatureValue(multiArray: raw)])
+        let out = try model.prediction(from: inputFeatures)
         // Extract the raw normalized output value using reflection
         let normalizedOutput = extractOutputValue(from: out)
         
@@ -197,7 +209,7 @@ final class BGTCNService: ModelService {
     }
     
     /// Extract the output value from the model prediction using reflection
-    private func extractOutputValue(from prediction: rangeupto1_tcnOutput) -> Double {
+    private func extractOutputValue(from prediction: MLFeatureProvider) -> Double {
         let mirror = Mirror(reflecting: prediction)
         var outputValue: Double = 0
         
@@ -260,21 +272,20 @@ final class BGTCNService: ModelService {
         return outputValue
     }
 }
-*/
-
- // MARK: - Model 2 Service
+// MARK: - Model 2 Service
 final class BGTCN2Service: ModelService {
     static let shared = BGTCN2Service()
 
-    private let model: rangeupto2_tcn
-    private let scaler: RangeUpTo2Scaler
+    private let model: MLModel
+    // private let scaler: RangeUpTo2Scaler  // Commented out - scaler now built into ML model
 
     private init() {
-        guard let m = try? rangeupto2_tcn(configuration: MLModelConfiguration()) else {
-            fatalError("❌ Could not load rangeupto2_tcn.mlpackage")
+        guard let modelURL = Bundle.main.url(forResource: "wavenet2", withExtension: "mlpackage"),
+              let m = try? MLModel(contentsOf: modelURL) else {
+            fatalError("❌ Could not load wavenet2.mlpackage")
         }
         self.model = m
-        self.scaler = RangeUpTo2Scaler()
+        // self.scaler = RangeUpTo2Scaler()  // Commented out - scaler now built into ML model
     }
 
     func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
@@ -298,12 +309,12 @@ final class BGTCN2Service: ModelService {
         
         print("🔍 Model 2 Raw Input (first timestep): \(inputData[0])")
         
-        // Use the proper scaler to normalize input
-        let scaledArray = try scaler.transformForCoreML(inputData)
+        // Use the proper scaler to normalize input - COMMENTED OUT: scaler now built into ML model
+        // let scaledArray = try scaler.transformForCoreML(inputData)
         
-        // Run prediction with properly scaled input
-        let input = rangeupto2_tcnInput(input_1: scaledArray)
-        let out = try model.prediction(input: input)
+        // Run prediction with raw input (scaling now handled by ML model)
+        let inputFeatures = try MLDictionaryFeatureProvider(dictionary: ["input_3": MLFeatureValue(multiArray: raw)])
+        let out = try model.prediction(from: inputFeatures)
         
         // Extract the raw output value - this is a normalized value that needs denormalization
         let rawOutput = extractOutputValue(from: out)
@@ -341,7 +352,7 @@ final class BGTCN2Service: ModelService {
         )
     }
     
-    private func extractOutputValue(from prediction: rangeupto2_tcnOutput) -> Double {
+    private func extractOutputValue(from prediction: MLFeatureProvider) -> Double {
         let mirror = Mirror(reflecting: prediction)
         var outputValue: Double = 0
         
@@ -384,15 +395,17 @@ final class BGTCN2Service: ModelService {
 // MARK: - Model 3 Service
 final class BGTCN3Service: ModelService {
     static let shared = BGTCN3Service()
-    private let model: rangeupto3_tcn
-    private let scaler: RangeUpTo3Scaler
+
+    private let model: MLModel
+    // private let scaler: RangeUpTo3Scaler  // Commented out - scaler now built into ML model
 
     private init() {
-        guard let m = try? rangeupto3_tcn(configuration: MLModelConfiguration()) else {
-            fatalError("❌ Could not load rangeupto3_tcn.mlpackage")
+        guard let modelURL = Bundle.main.url(forResource: "wavenet3", withExtension: "mlpackage"),
+              let m = try? MLModel(contentsOf: modelURL) else {
+            fatalError("❌ Could not load wavenet3.mlpackage")
         }
         self.model = m
-        self.scaler = RangeUpTo3Scaler()
+        // self.scaler = RangeUpTo3Scaler()  // Commented out - scaler now built into ML model
     }
 
     func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
@@ -414,12 +427,12 @@ final class BGTCN3Service: ModelService {
             inputData.append(timestepData)
         }
         
-        // Use the proper scaler to normalize input
-        let scaledArray = try scaler.transformForCoreML(inputData)
+        // Use the proper scaler to normalize input - COMMENTED OUT: scaler now built into ML model
+        // let scaledArray = try scaler.transformForCoreML(inputData)
         
-        // Run prediction with properly scaled input
-        let input = rangeupto3_tcnInput(input_1: scaledArray)
-        let out = try model.prediction(input: input)
+        // Run prediction with raw input (scaling now handled by ML model)
+        let inputFeatures = try MLDictionaryFeatureProvider(dictionary: ["input_3": MLFeatureValue(multiArray: raw)])
+        let out = try model.prediction(from: inputFeatures)
         
         // Extract the raw output value - this is a normalized value that needs denormalization
         let rawOutput = extractOutputValue(from: out)
@@ -455,7 +468,7 @@ final class BGTCN3Service: ModelService {
         )
     }
     
-    private func extractOutputValue(from prediction: rangeupto3_tcnOutput) -> Double {
+    private func extractOutputValue(from prediction: MLFeatureProvider) -> Double {
         let mirror = Mirror(reflecting: prediction)
         var outputValue: Double = 0
         
@@ -493,18 +506,19 @@ final class BGTCN3Service: ModelService {
     }
 }
 
-// MARK: - Model 4 Service
 final class BGTCN4Service: ModelService {
     static let shared = BGTCN4Service()
-    private let model: rangeupto4_tcn
-    private let scaler: RangeUpTo4Scaler
+
+    private let model: MLModel
+    // private let scaler: RangeUpTo4Scaler  // Commented out - scaler now built into ML model
 
     private init() {
-        guard let m = try? rangeupto4_tcn(configuration: MLModelConfiguration()) else {
-            fatalError("❌ Could not load rangeupto4_tcn.mlpackage")
+        guard let modelURL = Bundle.main.url(forResource: "wavenet4", withExtension: "mlpackage"),
+              let m = try? MLModel(contentsOf: modelURL) else {
+            fatalError("❌ Could not load wavenet4.mlpackage")
         }
         self.model = m
-        self.scaler = RangeUpTo4Scaler()
+        // self.scaler = RangeUpTo4Scaler()  // Commented out - scaler now built into ML model
     }
 
     func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
@@ -526,12 +540,12 @@ final class BGTCN4Service: ModelService {
             inputData.append(timestepData)
         }
         
-        // Use the proper scaler to normalize input
-        let scaledArray = try scaler.transformForCoreML(inputData)
+        // Use the proper scaler to normalize input - COMMENTED OUT: scaler now built into ML model
+        // let scaledArray = try scaler.transformForCoreML(inputData)
         
-        // Run prediction with properly scaled input
-        let input = rangeupto4_tcnInput(input_1: scaledArray)
-        let out = try model.prediction(input: input)
+        // Run prediction with raw input (scaling now handled by ML model)
+        let inputFeatures = try MLDictionaryFeatureProvider(dictionary: ["input_3": MLFeatureValue(multiArray: raw)])
+        let out = try model.prediction(from: inputFeatures)
         
         // Extract the raw output value - this is a normalized value that needs denormalization
         let rawOutput = extractOutputValue(from: out)
@@ -567,7 +581,7 @@ final class BGTCN4Service: ModelService {
         )
     }
     
-    private func extractOutputValue(from prediction: rangeupto4_tcnOutput) -> Double {
+    private func extractOutputValue(from prediction: MLFeatureProvider) -> Double {
         let mirror = Mirror(reflecting: prediction)
         var outputValue: Double = 0
         
@@ -608,15 +622,16 @@ final class BGTCN4Service: ModelService {
 // MARK: - Model 5 Service
 final class BGTCN5Service: ModelService {
     static let shared = BGTCN5Service()
-    private let model: rangeupto5_tcn
-    private let scaler: RangeUpTo5Scaler
+    private let model: MLModel
+    // private let scaler: RangeUpTo5Scaler  // Commented out - scaler now built into ML model
 
     private init() {
-        guard let m = try? rangeupto5_tcn(configuration: MLModelConfiguration()) else {
-            fatalError("❌ Could not load rangeupto5_tcn.mlpackage")
+        guard let modelURL = Bundle.main.url(forResource: "wavenet5", withExtension: "mlpackage"),
+              let m = try? MLModel(contentsOf: modelURL) else {
+            fatalError("❌ Could not load wavenet5.mlpackage")
         }
         self.model = m
-        self.scaler = RangeUpTo5Scaler()
+        // self.scaler = RangeUpTo5Scaler()  // Commented out - scaler now built into ML model
     }
 
     func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
@@ -638,12 +653,12 @@ final class BGTCN5Service: ModelService {
             inputData.append(timestepData)
         }
         
-        // Use the proper scaler to normalize input
-        let scaledArray = try scaler.transformForCoreML(inputData)
+        // Use the proper scaler to normalize input - COMMENTED OUT: scaler now built into ML model
+        // let scaledArray = try scaler.transformForCoreML(inputData)
         
-        // Run prediction with properly scaled input
-        let input = rangeupto5_tcnInput(input_1: scaledArray)
-        let out = try model.prediction(input: input)
+        // Run prediction with raw input (scaling now handled by ML model)
+        let inputFeatures = try MLDictionaryFeatureProvider(dictionary: ["input_3": MLFeatureValue(multiArray: raw)])
+        let out = try model.prediction(from: inputFeatures)
         
         // Extract the raw output value - this is a normalized value that needs denormalization
         let rawOutput = extractOutputValue(from: out)
@@ -679,7 +694,7 @@ final class BGTCN5Service: ModelService {
         )
     }
     
-    private func extractOutputValue(from prediction: rangeupto5_tcnOutput) -> Double {
+    private func extractOutputValue(from prediction: MLFeatureProvider) -> Double {
         let mirror = Mirror(reflecting: prediction)
         var outputValue: Double = 0
         
@@ -716,208 +731,3 @@ final class BGTCN5Service: ModelService {
         return outputValue
     }
 }
-
-// MARK: - Model 6 Service
-final class BGTCN6Service: ModelService {
-    static let shared = BGTCN6Service()
-    private let model: rangeupto6_tcn
-    private let scaler: RangeUpTo6Scaler
-
-    private init() {
-        guard let m = try? rangeupto6_tcn(configuration: MLModelConfiguration()) else {
-            fatalError("❌ Could not load rangeupto6_tcn.mlpackage")
-        }
-        self.model = m
-        self.scaler = RangeUpTo6Scaler()
-    }
-
-    func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
-        let shape = raw.shape.map { $0.intValue }
-        guard shape.suffix(2) == [24, 8] else {
-            throw NSError(domain: "BGTCN6", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected (1,24,8) or (24,8) array"])
-        }
-        
-        // Convert MLMultiArray to 2D array format for scaler
-        let ptr = UnsafeMutablePointer<Float32>(OpaquePointer(raw.dataPointer))
-        var inputData: [[Double]] = []
-        
-        for t in 0..<24 {
-            var timestepData: [Double] = []
-            for f in 0..<8 {
-                let index = t * 8 + f
-                timestepData.append(Double(ptr[index]))
-            }
-            inputData.append(timestepData)
-        }
-        
-        // Use the proper scaler to normalize input
-        let scaledArray = try scaler.transformForCoreML(inputData)
-        
-        // Run prediction with properly scaled input
-        let input = rangeupto6_tcnInput(input_1: scaledArray)
-        let out = try model.prediction(input: input)
-        
-        // Extract the raw output value - this is a normalized value that needs denormalization
-        let rawOutput = extractOutputValue(from: out)
-        
-        print("🔍 Model 6 Raw Output: \(rawOutput) mmol/L")
-        
-        // Apply proper output denormalization: raw_output * std + mean
-        // Using standard glucose denormalization parameters
-        let outputMean = 7.0  // mmol/L
-        let outputStd = 3.0   // mmol/L
-        let denormalizedOutput = (rawOutput * outputStd) + outputMean
-        
-        // Apply reasonable bounds checking (1.0-50.0 mmol/L = physiological range)
-        let clampedOutputMmol = max(1.0, min(50.0, denormalizedOutput))
-        
-        // Convert model output to the requested units
-        let predictionValue = usedMgdl ? (clampedOutputMmol * 18.0) : clampedOutputMmol
-        let currentBGMmol = currentBG / 18.0  // Convert current BG to mmol/L for comparison
-        
-        let modelPredictedChange = clampedOutputMmol - currentBGMmol
-        
-        return Prediction(
-            timestamp: Date(),
-            predictionValue: predictionValue,
-            usedMgdlUnits: usedMgdl,
-            currentBG: currentBG,
-            stabilityStatus: "",
-            modelOutput: clampedOutputMmol,
-            modelPredictedChange: modelPredictedChange * (usedMgdl ? 18.0 : 1.0),
-            observedTrend: 0,
-            actualBG: 0,
-            actualBGTimestamp: nil
-        )
-    }
-    
-    private func extractOutputValue(from prediction: rangeupto6_tcnOutput) -> Double {
-        let mirror = Mirror(reflecting: prediction)
-        var outputValue: Double = 0
-        
-        for child in mirror.children {
-            if let provider = child.value as? MLDictionaryFeatureProvider {
-                let featureNames = provider.featureNames
-                for featureName in featureNames {
-                    if let featureValue = provider.featureValue(for: featureName) {
-                        if featureValue.type == .multiArray, let multiArray = featureValue.multiArrayValue {
-                            if multiArray.count > 0 {
-                                outputValue = Double(multiArray[0].doubleValue)
-                                return outputValue
-                            }
-                        } else if featureValue.type == .double {
-                            outputValue = featureValue.doubleValue
-                            return outputValue
-                        } else if featureValue.type == .int64 {
-                            outputValue = Double(featureValue.int64Value)
-                            return outputValue
-                        }
-                    }
-                }
-            } else if let value = child.value as? MLMultiArray, value.count > 0 {
-                outputValue = Double(value[0].doubleValue)
-                break
-            } else if let value = child.value as? Double {
-                outputValue = value
-                break
-            } else if let value = child.value as? Float {
-                outputValue = Double(value)
-                break
-            }
-        }
-        return outputValue
-    }
-}
-
-// MARK: - Series Prediction Service
-final class SeriesPredictionService {
-    static let shared = SeriesPredictionService()
-    
-    private init() {}
-    
-    /// Helper method to create a copy of MLMultiArray
-    private func copyMLMultiArray(_ original: MLMultiArray) -> MLMultiArray {
-        guard let copy = try? MLMultiArray(shape: original.shape, dataType: original.dataType) else {
-            fatalError("Failed to create MLMultiArray copy")
-        }
-        
-        let originalPtr = UnsafeMutablePointer<Float32>(OpaquePointer(original.dataPointer))
-        let copyPtr = UnsafeMutablePointer<Float32>(OpaquePointer(copy.dataPointer))
-        
-        let count = original.count
-        for i in 0..<count {
-            copyPtr[i] = originalPtr[i]
-        }
-        
-        return copy
-    }
-    
-    /// Run all 6 models in series, log predictions, and save to SwiftData
-    /// Returns: Dictionary with model predictions (key: model number, value: prediction result)
-    func runSeriesPredictions(window: MLMultiArray, currentBG: Double, usedMgdl: Bool, modelContext: ModelContext? = nil) async -> [Int: Prediction] {
-        print("🔎 Starting Series Predictions - Current BG: \(currentBG) \(usedMgdl ? "mg/dL" : "mmol/L")")
-        
-        // Create MultiModelPrediction record
-        let currentBGInMmol = usedMgdl ? (currentBG / 18.0) : currentBG
-        let multiPrediction = MultiModelPrediction(timestamp: Date(), currentBG_mmol: currentBGInMmol)
-        
-        var modelPredictions: [Int: Prediction] = [:]
-        
-        do {
-            // --- Model 1 commented out due to missing Core ML types ---
-            /*
-            let windowCopy1 = copyMLMultiArray(window)
-            let prediction1 = try BGTCNService.shared.predict(window: windowCopy1, currentBG: currentBG, usedMgdl: usedMgdl)
-            multiPrediction.setPrediction(model: 1, mmol: prediction1.modelOutput)
-            modelPredictions[1] = prediction1
-            print("✓ Model 1 (rangeupto1_tcn): \(String(format: "%.2f", prediction1.modelOutput)) mmol/L = \(String(format: "%.1f", prediction1.modelOutput * 18.0)) mg/dL")
-            */
-            // --- End Model 1 ---
-            
-            let windowCopy2 = copyMLMultiArray(window)
-            let prediction2 = try BGTCN2Service.shared.predict(window: windowCopy2, currentBG: currentBG, usedMgdl: usedMgdl)
-            multiPrediction.setPrediction(model: 2, mmol: prediction2.modelOutput)
-            modelPredictions[2] = prediction2
-            print("✓ Model 2 (rangeupto2_tcn): \(String(format: "%.2f", prediction2.modelOutput)) mmol/L = \(String(format: "%.1f", prediction2.modelOutput * 18.0)) mg/dL")
-            
-            let windowCopy3 = copyMLMultiArray(window)
-            let prediction3 = try BGTCN3Service.shared.predict(window: windowCopy3, currentBG: currentBG, usedMgdl: usedMgdl)
-            multiPrediction.setPrediction(model: 3, mmol: prediction3.modelOutput)
-            modelPredictions[3] = prediction3
-            print("✓ Model 3 (rangeupto3_tcn): \(String(format: "%.2f", prediction3.modelOutput)) mmol/L = \(String(format: "%.1f", prediction3.modelOutput * 18.0)) mg/dL")
-            
-            let windowCopy4 = copyMLMultiArray(window)
-            let prediction4 = try BGTCN4Service.shared.predict(window: windowCopy4, currentBG: currentBG, usedMgdl: usedMgdl)
-            multiPrediction.setPrediction(model: 4, mmol: prediction4.modelOutput)
-            modelPredictions[4] = prediction4
-            print("✓ Model 4 (rangeupto4_tcn): \(String(format: "%.2f", prediction4.modelOutput)) mmol/L = \(String(format: "%.1f", prediction4.modelOutput * 18.0)) mg/dL")
-            
-            let windowCopy5 = copyMLMultiArray(window)
-            let prediction5 = try BGTCN5Service.shared.predict(window: windowCopy5, currentBG: currentBG, usedMgdl: usedMgdl)
-            multiPrediction.setPrediction(model: 5, mmol: prediction5.modelOutput)
-            modelPredictions[5] = prediction5
-            print("✓ Model 5 (rangeupto5_tcn): \(String(format: "%.2f", prediction5.modelOutput)) mmol/L = \(String(format: "%.1f", prediction5.modelOutput * 18.0)) mg/dL")
-            
-            let windowCopy6 = copyMLMultiArray(window)
-            let prediction6 = try BGTCN6Service.shared.predict(window: windowCopy6, currentBG: currentBG, usedMgdl: usedMgdl)
-            multiPrediction.setPrediction(model: 6, mmol: prediction6.modelOutput)
-            modelPredictions[6] = prediction6
-            print("✓ Model 6 (rangeupto6_tcn): \(String(format: "%.2f", prediction6.modelOutput)) mmol/L = \(String(format: "%.1f", prediction6.modelOutput * 18.0)) mg/dL")
-            
-            // Save to SwiftData if context is provided
-            if let context = modelContext {
-                context.insert(multiPrediction)
-                try context.save()
-                print("💾 Saved multi-model prediction to SwiftData")
-            }
-            
-            print("✅ Series Predictions Complete\n")
-            
-        } catch {
-            print("❌ Series Prediction Error: \(error)")
-        }
-        
-        return modelPredictions
-    }
-}
-

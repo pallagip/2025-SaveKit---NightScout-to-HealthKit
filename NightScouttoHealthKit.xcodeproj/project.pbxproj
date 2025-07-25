@@ -34,16 +34,36 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				wavenet1.mlpackage,
+				wavenet2.mlpackage,
+				wavenet3.mlpackage,
+				wavenet4.mlpackage,
+				wavenet5.mlpackage,
 			);
 			target = AD9FF4F92DCE978500E50BD9 /* NightScouttoHealthKit */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+		AD6BE6602E329836004B2E0D /* Exceptions for "NightScouttoHealthKit" folder in "Copy Bundle Resources" phase from "NightScouttoHealthKit" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			buildPhase = AD9FF4F82DCE978500E50BD9 /* Resources */;
+			membershipExceptions = (
+				wavenet1.mlpackage,
+				wavenet2.mlpackage,
+				wavenet3.mlpackage,
+				wavenet4.mlpackage,
+				wavenet5.mlpackage,
+			);
+		};
+/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		AD9FF4FC2DCE978500E50BD9 /* NightScouttoHealthKit */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				AD9FF5302DCE9C9E00E50BD9 /* Exceptions for "NightScouttoHealthKit" folder in "NightScouttoHealthKit" target */,
+				AD6BE6602E329836004B2E0D /* Exceptions for "NightScouttoHealthKit" folder in "Copy Bundle Resources" phase from "NightScouttoHealthKit" target */,
 			);
 			path = NightScouttoHealthKit;
 			sourceTree = "<group>";
