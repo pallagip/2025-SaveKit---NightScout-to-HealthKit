@@ -248,6 +248,22 @@ struct BGPredictionView: View {
     @MainActor
     private func predict() async {
         do {
+            // Check for recent insulin or carbohydrate entries within the last 30 minutes
+            let hasRecentEntries = try await hk.hasRecentInsulinOrCarbEntries(minutesBack: 30.0)
+            
+            if hasRecentEntries {
+                // Display "Too Early to tell" message and reset all model displays
+                predictText = "Too Early to tell"
+                wavenet1Text = "—"
+                wavenet2Text = "—"
+                wavenet3Text = "—"
+                wavenet4Text = "—"
+                wavenet5Text = "—"
+                
+                print("🚫 Prediction halted: Recent insulin or carbohydrate entry detected within 30 minutes")
+                return
+            }
+            
             // Get current blood glucose using the correct method
             let currentBG = try await hk.fetchLatestGlucoseValue()
             let currentBGValue = useMgdlUnits ? currentBG : (currentBG / 18.0)

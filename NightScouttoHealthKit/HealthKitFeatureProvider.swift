@@ -450,6 +450,74 @@ final class HealthKitFeatureProvider: ObservableObject {
         }
     }
     
+    /// Check if there are recent insulin or carbohydrate entries within the specified time window
+    /// - Parameter minutesBack: Number of minutes to look back (default 30 minutes)
+    /// - Returns: True if recent entries found, false otherwise
+    func hasRecentInsulinOrCarbEntries(minutesBack: Double = 30.0) async throws -> Bool {
+        let now = Date()
+        let startDate = now.addingTimeInterval(-minutesBack * 60) // Convert minutes to seconds
+        
+        let predicate = HKQuery.predicateForSamples(withStart: startDate,
+                                                   end: now,
+                                                   options: .strictEndDate)
+        
+        // Check for recent insulin entries
+        let hasRecentInsulin = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
+            let query = HKSampleQuery(sampleType: bolusSamples,
+                                      predicate: predicate,
+                                      limit: 1,
+                                      sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate,
+                                                                         ascending: false)]) { (_, samples, error) in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                
+                let hasEntries = !(samples?.isEmpty ?? true)
+                if hasEntries {
+                    if let sample = samples?.first as? HKQuantitySample {
+                        let doseUnits = sample.quantity.doubleValue(for: HKUnit.internationalUnit())
+                        let minutesAgo = now.timeIntervalSince(sample.endDate) / 60.0
+                        print("🚫 Recent insulin entry found: \(String(format: "%.2f", doseUnits))U at \(String(format: "%.1f", minutesAgo)) minutes ago")
+                    }
+                }
+                continuation.resume(returning: hasEntries)
+            }
+            store.execute(query)
+        }
+        
+        if hasRecentInsulin {
+            return true
+        }
+        
+        // Check for recent carbohydrate entries
+        let hasRecentCarbs = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
+            let query = HKSampleQuery(sampleType: carbSamples,
+                                      predicate: predicate,
+                                      limit: 1,
+                                      sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate,
+                                                                         ascending: false)]) { (_, samples, error) in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                
+                let hasEntries = !(samples?.isEmpty ?? true)
+                if hasEntries {
+                    if let sample = samples?.first as? HKQuantitySample {
+                        let carbGrams = sample.quantity.doubleValue(for: HKUnit.gram())
+                        let minutesAgo = now.timeIntervalSince(sample.endDate) / 60.0
+                        print("🚫 Recent carbohydrate entry found: \(String(format: "%.1f", carbGrams))g at \(String(format: "%.1f", minutesAgo)) minutes ago")
+                    }
+                }
+                continuation.resume(returning: hasEntries)
+            }
+            store.execute(query)
+        }
+        
+        return hasRecentCarbs
+    }
+    
     /// Fetch the most recent heart rate value (in beats per minute)
     /// - Parameter minutesBack: Number of minutes to look back (default 30 minutes)
     /// - Returns: Heart rate in beats per minute, or 70.0 as default if no recent data
