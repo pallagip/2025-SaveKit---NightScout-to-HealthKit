@@ -2,6 +2,7 @@ import Foundation
 import UserNotifications
 import SwiftData
 import BackgroundTasks
+import UIKit
 
 class NotificationManager: ObservableObject {
     static let shared = NotificationManager()
@@ -22,25 +23,9 @@ class NotificationManager: ObservableObject {
     
     // Schedule all notifications for the specified times
     func scheduleHourlyNotifications() {
-        // Clear existing notifications first
+        print("🚫 Hourly notification scheduling disabled - predictions are manual-only")
+        // Clear any existing notifications
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
-        
-        // Define the hours (9 AM to 11:45 PM = 23:45)
-        let hours = Array(9...23)
-        
-        // Define the minutes (:00, :15, :30, :45)
-        let minutes = [0, 15, 30, 45]
-        
-        var notificationCount = 0
-        
-        for hour in hours {
-            for minute in minutes {
-                scheduleNotification(hour: hour, minute: minute)
-                notificationCount += 1
-            }
-        }
-        
-        print("📅 Scheduled \(notificationCount) notifications from 9:00 to 23:45 every 15 minutes")
     }
     
     // Schedule a single silent background trigger for a specific time
@@ -88,7 +73,10 @@ class NotificationManager: ObservableObject {
     /// - Returns: Average prediction value in mmol/L, or nil if process failed
     @MainActor
     func performBackgroundPredictionProcess(modelContext: ModelContext) async -> Double? {
-        print("🔔 === BACKGROUND PREDICTION PROCESS STARTED ===")
+        print("🚫 BACKGROUND PREDICTIONS DISABLED - This method should not be called")
+        print("🚫 Predictions are now manual-only via button presses")
+        return nil
+        
         let startTime = Date()
         
         do {
@@ -424,142 +412,22 @@ class NotificationManager: ObservableObject {
     
     // MARK: - Background Task Scheduling
     
-    /// Schedules background app refresh tasks for automatic predictions
-    /// Runs 24 hours a day at each quarter of the hour (:00, :15, :30, :45)
+    /// Background task scheduling disabled - predictions are now manual-only
     func scheduleBackgroundTasks() {
-        // Calculate next quarter-hour mark (:00, :15, :30, :45) - runs 24/7
-        let now = Date()
-        let calendar = Calendar.current
-        let currentMinute = calendar.component(.minute, from: now)
-        let currentSecond = calendar.component(.second, from: now)
-        
-        // Find next quarter-hour
-        let minutesToNextQuarter = (15 - (currentMinute % 15)) % 15
-        let secondsToNextQuarter = (minutesToNextQuarter * 60) - currentSecond
-        let nextQuarterHour = now.addingTimeInterval(TimeInterval(max(60, secondsToNextQuarter))) // At least 1 minute from now
-        
-        // Schedule app refresh task for next quarter-hour
-        let refreshRequest = BGAppRefreshTaskRequest(identifier: "com.ProDiabeticsTeam.NightScouttoHealthKitv1")
-        refreshRequest.earliestBeginDate = nextQuarterHour
-        
-        do {
-            try BGTaskScheduler.shared.submit(refreshRequest)
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm:ss"
-            print("✅ Scheduled background app refresh for \(formatter.string(from: nextQuarterHour))")
-        } catch {
-            print("❌ Failed to schedule background app refresh: \(error.localizedDescription)")
-        }
-        
-        // Schedule processing task for hourly extended sync
-        let minutesToNextHour = 60 - currentMinute
-        let secondsToNextHour = (minutesToNextHour * 60) - currentSecond
-        let nextHour = now.addingTimeInterval(TimeInterval(secondsToNextHour))
-        
-        let processingRequest = BGProcessingTaskRequest(identifier: "com.ProDiabeticsTeam.NightScouttoHealthKit.processing")
-        processingRequest.earliestBeginDate = nextHour
-        processingRequest.requiresNetworkConnectivity = true
-        processingRequest.requiresExternalPower = false
-        
-        do {
-            try BGTaskScheduler.shared.submit(processingRequest)
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm:ss"
-            print("✅ Scheduled background processing for \(formatter.string(from: nextHour))")
-        } catch {
-            print("❌ Failed to schedule background processing: \(error.localizedDescription)")
-        }
+        print("🚫 Background task scheduling disabled - predictions are manual-only")
+        // Cancel any existing background tasks
+        BGTaskScheduler.shared.cancelAllTaskRequests()
     }
     
-    /// Handles background app refresh task execution
-    /// This is called by the system when the background task fires
+    /// Background app refresh disabled - predictions are now manual-only
     func handleBackgroundAppRefresh(task: BGAppRefreshTask, modelContainer: ModelContainer) {
-        print("🔄 === BACKGROUND APP REFRESH TASK STARTED ===")
-        
-        // Schedule the next background task
-        scheduleBackgroundTasks()
-        
-        // Set expiration handler
-        task.expirationHandler = {
-            print("⏰ Background app refresh task expired")
-            task.setTaskCompleted(success: false)
-        }
-        
-        // Check if we should run predictions based on current time
-        let calendar = Calendar.current
-        let now = Date()
-        let hour = calendar.component(.hour, from: now)
-        let minute = calendar.component(.minute, from: now)
-        
-        // Only run during prediction hours (9-23) and near quarter-hour intervals
-        guard hour >= 9 && hour <= 23 else {
-            print("🔄 Outside prediction hours (9-23), scheduling next task")
-            task.setTaskCompleted(success: true)
-            return
-        }
-        
-        let validMinutes = [0, 15, 30, 45]
-        let isValidTime = validMinutes.contains { abs(minute - $0) <= 5 } // 5-minute tolerance
-        
-        guard isValidTime else {
-            print("🔄 Not near quarter-hour interval, scheduling next task")
-            task.setTaskCompleted(success: true)
-            return
-        }
-        
-        print("🔄 Running background prediction at \(hour):\(String(format: "%02d", minute))")
-        
-        // Run the automated fetch → cache → predict process
-        Task {
-            let modelContext = ModelContext(modelContainer)
-            let averagePrediction = await performBackgroundPredictionProcess(modelContext: modelContext)
-            
-            if let prediction = averagePrediction {
-                print("✅ Automated prediction cycle completed successfully at \(hour):\(String(format: "%02d", minute))")
-                print("🩸 Average prediction: \(String(format: "%.1f", prediction)) mmol/L (\(String(format: "%.0f", prediction * 18.0)) mg/dL)")
-                print("📈 Data automatically saved to SwiftData for CSV export")
-                task.setTaskCompleted(success: true)
-            } else {
-                print("❌ Automated prediction cycle failed at \(hour):\(String(format: "%02d", minute))")
-                print("🔄 Will retry at next scheduled time")
-                task.setTaskCompleted(success: false)
-            }
-        }
+        print("🚫 Background app refresh disabled - predictions are manual-only")
+        task.setTaskCompleted(success: true)
     }
     
-    /// Handles background processing task execution
-    /// This is called by the system when the processing task fires
+    /// Background processing disabled - predictions are now manual-only
     func handleBackgroundProcessing(task: BGProcessingTask, modelContainer: ModelContainer) {
-        print("⚙️ === BACKGROUND PROCESSING TASK STARTED ===")
-        
-        // Schedule the next background task
-        scheduleBackgroundTasks()
-        
-        // Set expiration handler
-        task.expirationHandler = {
-            print("⏰ Background processing task expired")
-            task.setTaskCompleted(success: false)
-        }
-        
-        // Run extended automated fetch → cache → predict process
-        Task {
-            let modelContext = ModelContext(modelContainer)
-            let averagePrediction = await performBackgroundPredictionProcess(modelContext: modelContext)
-            
-            if let prediction = averagePrediction {
-                let now = Date()
-                let hour = Calendar.current.component(.hour, from: now)
-                let minute = Calendar.current.component(.minute, from: now)
-                
-                print("✅ Extended prediction cycle completed successfully at \(hour):\(String(format: "%02d", minute))")
-                print("🩸 Average prediction: \(String(format: "%.1f", prediction)) mmol/L (\(String(format: "%.0f", prediction * 18.0)) mg/dL)")
-                print("📈 Extended processing complete - data saved to SwiftData")
-                task.setTaskCompleted(success: true)
-            } else {
-                print("❌ Extended prediction cycle failed")
-                print("🔄 Will retry at next scheduled time")
-                task.setTaskCompleted(success: false)
-            }
-        }
+        print("🚫 Background processing disabled - predictions are manual-only")
+        task.setTaskCompleted(success: true)
     }
 }

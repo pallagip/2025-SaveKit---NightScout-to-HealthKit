@@ -2,7 +2,7 @@
 //  ContentView.swift
 //  NightScouttoHealthKit
 //
-//  Created by Patrick Pallagi on 2025-05-09.
+//  Created by Patrick Pallagi on 2025-05-09. Commented
 //
 
 import SwiftUI
