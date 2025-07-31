@@ -39,6 +39,9 @@ struct NightScouttoHealthKitApp: App {
                     // Initialize WatchConnectivity for Apple Watch communication
                     _ = WatchConnectivityManager.shared
                     print("✅ WatchConnectivityManager initialized")
+                    
+                    // Request notification permissions
+                    appDelegate.requestNotificationPermissions()
                 }
         }
     }
@@ -131,7 +134,17 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             print("⏰ App became active during scheduled prediction time - checking for missed predictions")
         }
     }
-
+    
+    // MARK: - Notification Permissions
+    
+    func requestNotificationPermissions() {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
+            if let error = error {
+                print("Error requesting notification permissions: \(error)")
+            } else {
+                print("Notification permissions \(granted ? "granted" : "denied")")
+            }
+        }
+    }
 }
-
-// Background tasks are configured in AppDelegate per the memory about continuous sync

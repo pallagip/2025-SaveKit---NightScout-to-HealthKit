@@ -79,7 +79,6 @@
 				wavenet2.mlpackage,
 				wavenet3.mlpackage,
 				wavenet4.mlpackage,
-				wavenet5.mlpackage,
 			);
 			target = AD9FF4F92DCE978500E50BD9 /* NightScouttoHealthKit */;
 		};
@@ -94,7 +93,6 @@
 				wavenet2.mlpackage,
 				wavenet3.mlpackage,
 				wavenet4.mlpackage,
-				wavenet5.mlpackage,
 			);
 		};
 /* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
@@ -703,17 +701,19 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = NightScouttoHealthKit/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = SaveKit;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to read your blood glucose data from HealthKit to compare with Nightscout data and avoid duplicates.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs access to write your blood glucose data from Nightscout to HealthKit.";
+				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
+				INFOPLIST_KEY_NSHealthClinicalHealthRecordsShareUsageDescription = "The app uses HealthData to provide accurate updates.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your health data to sync blood glucose readings from NightScout to HealthKit and create predictions.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs to update your health data with blood glucose readings from NightScout and prediction results.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs to access your local network to connect with Nightscout instances that may be hosted locally.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UIRequiredDeviceCapabilities = "armv7 healthkit";
+				INFOPLIST_KEY_UIRequiredDeviceCapabilities = armv7;
 				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "$(WK_COMPANION_BUNDLE_IDENTIFIER:default=com.ProDiabeticsTeam.NightScouttoHealthKitv1)";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -740,17 +740,19 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = NightScouttoHealthKit/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = SaveKit;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to read your blood glucose data from HealthKit to compare with Nightscout data and avoid duplicates.";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs access to write your blood glucose data from Nightscout to HealthKit.";
+				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
+				INFOPLIST_KEY_NSHealthClinicalHealthRecordsShareUsageDescription = "The app uses HealthData to provide accurate updates.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your health data to sync blood glucose readings from NightScout to HealthKit and create predictions.";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs to update your health data with blood glucose readings from NightScout and prediction results.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app needs to access your local network to connect with Nightscout instances that may be hosted locally.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UIRequiredDeviceCapabilities = "armv7 healthkit";
+				INFOPLIST_KEY_UIRequiredDeviceCapabilities = armv7;
 				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "$(WK_COMPANION_BUNDLE_IDENTIFIER:default=com.ProDiabeticsTeam.NightScouttoHealthKitv1)";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
