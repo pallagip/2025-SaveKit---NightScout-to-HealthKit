@@ -38,6 +38,61 @@ class BGPredictionService: ObservableObject {
     // Cache timeout in minutes
     private let cacheTimeoutMinutes: Double = 5
     
+    /// Predict blood glucose using SwiftData cache when HealthKit is unavailable
+    /// - Parameter modelContext: SwiftData model context
+    /// - Returns: A tuple containing the predicted blood glucose value and timestamp
+    @MainActor
+    func predictWithSwiftDataCache(modelContext: ModelContext) async throws -> (value: Double, timestamp: Date) {
+        isProcessing = true
+        defer { isProcessing = false }
+        
+        do {
+            self.lastError = nil
+            
+            print("\n🗄️ === SWIFTDATA CACHE PREDICTION ===\n")
+            print("⚠️ HealthKit unavailable, using cached Nightscout data")
+            
+            // Build input window from SwiftData cache
+            let inputTensor = try await healthKitFeatureProvider.buildWindowFromSwiftDataCache(modelContext: modelContext)
+            
+            // Get latest glucose from cache for current BG
+            let glucoseData = try await healthKitFeatureProvider.fetchGlucoseFromSwiftDataCache(modelContext: modelContext, limit: 1)
+            guard let latestReading = glucoseData.first else {
+                throw NSError(domain: "SwiftData", code: 3, userInfo: [NSLocalizedDescriptionKey: "No glucose data in cache"])
+            }
+            
+            let currentGlucose = latestReading.value
+            print("🩸 Latest cached glucose: \(String(format: "%.1f", currentGlucose)) mg/dL at \(latestReading.date)")
+            
+            // Calculate prediction count
+            let predictionCount = calculateNextPredictionCount(modelContext: modelContext)
+            
+            // Use WaveNet2Service for prediction
+            let predictionResult = try WaveNet2Service.shared.predict(
+                window: inputTensor,
+                currentBG: currentGlucose,
+                usedMgdl: true,
+                predictionCount: predictionCount
+            )
+            
+            print("\n🎯 === CACHE-BASED PREDICTION RESULT ===")
+            print("📊 Predicted: \(String(format: "%.1f", predictionResult.predictionValue)) mg/dL")
+            print("⏰ For time: \(predictionResult.timestamp)")
+            print("🗄️ === CACHE PREDICTION COMPLETE ===\n")
+            
+            // Update last prediction
+            self.lastPrediction = predictionResult.predictionValue
+            self.lastPredictionTimestamp = predictionResult.timestamp
+            
+            return (value: predictionResult.predictionValue, timestamp: predictionResult.timestamp)
+            
+        } catch {
+            self.lastError = error.localizedDescription
+            print("❌ Cache prediction error: \(error)")
+            throw error
+        }
+    }
+    
     /// Predict blood glucose using the pre-trained BGPersonal_BiLSTM model and dynamic factors
     /// - Returns: A tuple containing the predicted blood glucose value and timestamp
     @MainActor
@@ -505,6 +560,15 @@ class BGPredictionService: ObservableObject {
         // Determine stability status based on recent trend
         let stabilityStatus = determineStabilityStatus(momentum: momentum)
         
+        // Track workout data if modelContext is available
+        if let modelContext = modelContext {
+            let workoutTrackingService = WorkoutTrackingService()
+            let _ = await workoutTrackingService.createWorkoutTimeRecord(
+                predictionTimestamp: timestamp,
+                modelContext: modelContext
+            )
+        }
+        
         // Create the prediction object with all necessary fields
         // If using mmol/L, convert the prediction from mg/dL to mmol/L
         let finalPredictionValue = useMgdl ? predictedValueMgdl : (predictedValueMgdl / 18.0)
@@ -537,6 +601,95 @@ class BGPredictionService: ObservableObject {
     /// Request HealthKit authorization (should be called early in the app lifecycle)
     func requestHealthKitAuthorization() async throws {
         try await healthKitFeatureProvider.requestAuth()
+    }
+    
+    /// Migrate existing predictions to have sequential prediction counts
+    /// This fixes the issue where existing predictions show "—" instead of numbers
+    /// - Parameter modelContext: SwiftData model context to update existing predictions
+    func migratePredictionCounts(modelContext: ModelContext) {
+        do {
+            // Fetch all predictions sorted by timestamp (oldest first)
+            let descriptor = FetchDescriptor<Prediction>(
+                sortBy: [SortDescriptor(\Prediction.timestamp, order: .forward)]
+            )
+            let allPredictions = try modelContext.fetch(descriptor)
+            
+            print("📊 Starting prediction count migration for \(allPredictions.count) predictions")
+            
+            // Update predictions with sequential counts
+            for (index, prediction) in allPredictions.enumerated() {
+                let newCount = index + 1
+                prediction.predictionCount = newCount
+                print("📊 Updated prediction \(prediction.id) with count \(newCount)")
+            }
+            
+            // Save changes
+            try modelContext.save()
+            print("✅ Successfully migrated \(allPredictions.count) predictions with sequential counts")
+            
+        } catch {
+            print("⚠️ Error migrating prediction counts: \(error)")
+        }
+    }
+    
+    /// Calculate the next prediction count based on existing predictions in SwiftData
+    /// - Parameter modelContext: SwiftData model context to query existing predictions
+    /// - Returns: The next sequential prediction count (1, 2, 3, ...)
+    func calculateNextPredictionCount(modelContext: ModelContext?) -> Int {
+        guard let modelContext = modelContext else {
+            print("⚠️ No model context provided, using count 1")
+            return 1
+        }
+        
+        do {
+            // Query for the highest prediction count in existing predictions
+            let descriptor = FetchDescriptor<Prediction>(
+                sortBy: [SortDescriptor(\Prediction.predictionCount, order: .reverse)]
+            )
+            let predictions = try modelContext.fetch(descriptor)
+            
+            if let highestCount = predictions.first?.predictionCount {
+                let nextCount = highestCount + 1
+                print("📊 Next prediction count: \(nextCount) (previous highest: \(highestCount))")
+                return nextCount
+            } else {
+                print("📊 No existing predictions found, starting with count 1")
+                return 1
+            }
+        } catch {
+            print("⚠️ Error fetching prediction count: \(error), defaulting to count 1")
+            return 1
+        }
+    }
+    
+    /// Calculate the next prediction count for MultiModelPrediction based on existing records
+    /// - Parameter modelContext: SwiftData model context to query existing predictions
+    /// - Returns: The next sequential prediction count (1, 2, 3, ...)
+    private func calculateNextMultiModelPredictionCount(modelContext: ModelContext?) -> Int {
+        guard let modelContext = modelContext else {
+            print("⚠️ No model context provided, using count 1")
+            return 1
+        }
+        
+        do {
+            // Query for the highest prediction count in existing MultiModelPredictions
+            let descriptor = FetchDescriptor<MultiModelPrediction>(
+                sortBy: [SortDescriptor(\MultiModelPrediction.predictionCount, order: .reverse)]
+            )
+            let predictions = try modelContext.fetch(descriptor)
+            
+            if let highestCount = predictions.first?.predictionCount {
+                let nextCount = highestCount + 1
+                print("📊 Next multi-model prediction count: \(nextCount) (previous highest: \(highestCount))")
+                return nextCount
+            } else {
+                print("📊 No existing multi-model predictions found, starting with count 1")
+                return 1
+            }
+        } catch {
+            print("⚠️ Error fetching multi-model prediction count: \(error), defaulting to count 1")
+            return 1
+        }
     }
     
     /// Create a prediction record and also return individual model predictions
@@ -599,6 +752,9 @@ class BGPredictionService: ObservableObject {
         // Determine stability status based on recent trend
         let stabilityStatus = determineStabilityStatus(momentum: momentum)
         
+        // Calculate the next prediction count
+        let predictionCount = calculateNextPredictionCount(modelContext: modelContext)
+        
         // Create the prediction object with all necessary fields
         // If using mmol/L, convert the prediction from mg/dL to mmol/L
         let finalPredictionValue = useMgdl ? predictedValueMgdl : (predictedValueMgdl / 18.0)
@@ -608,9 +764,11 @@ class BGPredictionService: ObservableObject {
             predictionValue: finalPredictionValue,
             usedMgdlUnits: useMgdl,
             currentBG: currentBGInMmol,
-            stabilityStatus: stabilityStatus
+            stabilityStatus: stabilityStatus,
+            predictionCount: predictionCount
         )
         
         return (prediction: prediction, modelPredictions: modelPredictions)
     }
 }
+

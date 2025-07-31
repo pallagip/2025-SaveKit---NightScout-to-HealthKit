@@ -8,6 +8,7 @@
 import HealthKit
 import CoreML
 import Combine
+import SwiftData
 
 /// Pulls the last 8 timesteps (5-minute bins) of the four features
 /// and returns a ready-to-scale MLMultiArray [1, 8, 4]
@@ -61,8 +62,12 @@ final class HealthKitFeatureProvider: ObservableObject {
 
     /// (1) ask permission once, early in app life-cycle
     func requestAuth() async throws {
+        // Define workout types for authorization
+        let workoutType = HKObjectType.workoutType()
+        let activeEnergyType = HKQuantityType(.activeEnergyBurned)
+        
         try await store.requestAuthorization(toShare: [], read: [
-            glucose, heartRate, carbSamples, bolusSamples
+            glucose, heartRate, carbSamples, bolusSamples, workoutType, activeEnergyType
         ])
     }
 
@@ -118,10 +123,7 @@ final class HealthKitFeatureProvider: ObservableObject {
                                  by: 15 * 60).map { Date(timeIntervalSince1970: $0) }
         
         for anchor in insulinBins {
-            let bolus = try await latestValue(of: bolusSamples,
-                                             upTo: anchor,
-                                             unit: HKUnit.internationalUnit(),
-                                             deliveryReason: .bolus)
+            let bolus = try await Self.calculateActiveInsulinFromHealthKit(store: store, now: now, upTo: anchor)
             extendedBolusDose.append(bolus)
         }
         
@@ -131,9 +133,7 @@ final class HealthKitFeatureProvider: ObservableObject {
                                by: 15 * 60).map { Date(timeIntervalSince1970: $0) }
         
         for anchor in carbsBins {
-            let carbs = try await latestValue(of: carbSamples,
-                                             upTo: anchor,
-                                             unit: HKUnit.gram())
+            let carbs = try await Self.calculateActiveCarbsFromHealthKit(store: store, now: now, upTo: anchor)
             extendedCarbsDose.append(carbs)
         }
         
@@ -156,73 +156,9 @@ final class HealthKitFeatureProvider: ObservableObject {
                                                        deliveryReason: .bolus))
         }
         
-        // Calculate active insulin from actual HealthKit insulin doses in 4-hour window
-        func calculateActiveInsulinFromHealthKit() async throws -> Double {
-            let insulinType = HKQuantityType.quantityType(forIdentifier: .insulinDelivery)!
-            let fourHoursAgo = Calendar.current.date(byAdding: .hour, value: -4, to: now)!
-            let predicate = HKQuery.predicateForSamples(withStart: fourHoursAgo, end: now, options: .strictEndDate)
-            
-            let insulinSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
-                let query = HKSampleQuery(sampleType: insulinType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
-                    if let error = error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume(returning: samples as? [HKQuantitySample] ?? [])
-                    }
-                }
-                store.execute(query)
-            }
-            
-            var totalActiveInsulin = 0.0
-            for sample in insulinSamples {
-                let doseUnits = sample.quantity.doubleValue(for: HKUnit.internationalUnit())
-                let hoursAgo = now.timeIntervalSince(sample.startDate) / 3600.0
-                
-                // Insulin activity factor using exponential decay (4-hour duration)
-                let activityFactor = max(0.0, exp(-hoursAgo / 1.5)) // 1.5h time constant
-                totalActiveInsulin += doseUnits * activityFactor
-                
-                print("    → Insulin: \(String(format: "%.2f", doseUnits))U at \(String(format: "%.1f", hoursAgo))h ago, activity: \(String(format: "%.3f", activityFactor))")
-            }
-            
-            return totalActiveInsulin
-        }
-        
-        // Calculate active carbs from actual HealthKit carb entries in 3-hour window
-        func calculateActiveCarbsFromHealthKit() async throws -> Double {
-            let carbType = HKQuantityType.quantityType(forIdentifier: .dietaryCarbohydrates)!
-            let threeHoursAgo = Calendar.current.date(byAdding: .hour, value: -3, to: now)!
-            let predicate = HKQuery.predicateForSamples(withStart: threeHoursAgo, end: now, options: .strictEndDate)
-            
-            let carbSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
-                let query = HKSampleQuery(sampleType: carbType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
-                    if let error = error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume(returning: samples as? [HKQuantitySample] ?? [])
-                    }
-                }
-                store.execute(query)
-            }
-            
-            var totalActiveCarbs = 0.0
-            for sample in carbSamples {
-                let carbGrams = sample.quantity.doubleValue(for: HKUnit.gram())
-                let hoursAgo = now.timeIntervalSince(sample.startDate) / 3600.0
-                
-                // Carb absorption factor using exponential decay (3-hour duration)
-                let absorptionFactor = max(0.0, exp(-hoursAgo / 1.0)) // 1.0h time constant
-                totalActiveCarbs += carbGrams * absorptionFactor
-                
-                print("    → Carbs: \(String(format: "%.1f", carbGrams))g at \(String(format: "%.1f", hoursAgo))h ago, absorption: \(String(format: "%.3f", absorptionFactor))")
-            }
-            
-            return totalActiveCarbs
-        }
-        
         // Calculate total active insulin and carbs using new HealthKit-based methods
-        let totalActiveInsulin = try await calculateActiveInsulinFromHealthKit()
-        let totalActiveCarbs = try await calculateActiveCarbsFromHealthKit()
+        let totalActiveInsulin = try await Self.calculateActiveInsulinFromHealthKit(store: store, now: now)
+        let totalActiveCarbs = try await Self.calculateActiveCarbsFromHealthKit(store: store, now: now)
         
         // Combine recent data with extended history calculations
         // Convert bolus + carbs to active / operative via e-decay for recent data
@@ -315,6 +251,72 @@ final class HealthKitFeatureProvider: ObservableObject {
         print("🍞 Total active carbs: \(String(format: "%.2f", totalActiveCarbs)) g (bounded: \(String(format: "%.1f", boundedCOB)) g)")
         
         return x
+    }
+    
+    /// Calculate active insulin from actual HealthKit insulin doses in 4-hour window
+    private static func calculateActiveInsulinFromHealthKit(store: HKHealthStore, now: Date, upTo: Date? = nil) async throws -> Double {
+        let insulinType = HKQuantityType.quantityType(forIdentifier: .insulinDelivery)!
+        let fourHoursAgo = Calendar.current.date(byAdding: .hour, value: -4, to: now)!
+        let endDate = upTo ?? now
+        let predicate = HKQuery.predicateForSamples(withStart: fourHoursAgo, end: endDate, options: .strictEndDate)
+        
+        let insulinSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: insulinType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: samples as? [HKQuantitySample] ?? [])
+                }
+            }
+            store.execute(query)
+        }
+        
+        var totalActiveInsulin = 0.0
+        for sample in insulinSamples {
+            let doseUnits = sample.quantity.doubleValue(for: HKUnit.internationalUnit())
+            let hoursAgo = now.timeIntervalSince(sample.startDate) / 3600.0
+            
+            // Insulin activity factor using exponential decay (4-hour duration)
+            let activityFactor = max(0.0, exp(-hoursAgo / 1.5)) // 1.5h time constant
+            totalActiveInsulin += doseUnits * activityFactor
+            
+            print("    → Insulin: \(String(format: "%.2f", doseUnits))U at \(String(format: "%.1f", hoursAgo))h ago, activity: \(String(format: "%.3f", activityFactor))")
+        }
+        
+        return totalActiveInsulin
+    }
+    
+    /// Calculate active carbs from actual HealthKit carb entries in 3-hour window
+    private static func calculateActiveCarbsFromHealthKit(store: HKHealthStore, now: Date, upTo: Date? = nil) async throws -> Double {
+        let carbType = HKQuantityType.quantityType(forIdentifier: .dietaryCarbohydrates)!
+        let threeHoursAgo = Calendar.current.date(byAdding: .hour, value: -3, to: now)!
+        let endDate = upTo ?? now
+        let predicate = HKQuery.predicateForSamples(withStart: threeHoursAgo, end: endDate, options: .strictEndDate)
+        
+        let carbSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: carbType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: samples as? [HKQuantitySample] ?? [])
+                }
+            }
+            store.execute(query)
+        }
+        
+        var totalActiveCarbs = 0.0
+        for sample in carbSamples {
+            let carbGrams = sample.quantity.doubleValue(for: HKUnit.gram())
+            let hoursAgo = now.timeIntervalSince(sample.startDate) / 3600.0
+            
+            // Carb absorption factor using exponential decay (3-hour duration)
+            let absorptionFactor = max(0.0, exp(-hoursAgo / 1.0)) // 1.0h time constant
+            totalActiveCarbs += carbGrams * absorptionFactor
+            
+            print("    → Carbs: \(String(format: "%.1f", carbGrams))g at \(String(format: "%.1f", hoursAgo))h ago, absorption: \(String(format: "%.3f", absorptionFactor))")
+        }
+        
+        return totalActiveCarbs
     }
     
     /// Fetch recent glucose values, ordered from most recent to oldest
@@ -518,6 +520,80 @@ final class HealthKitFeatureProvider: ObservableObject {
         return hasRecentCarbs
     }
     
+    /// Fetch the timestamp of the most recent dietary carbohydrate entry
+    /// - Parameter hoursBack: Number of hours to look back (default 5 hours)
+    /// - Returns: The timestamp of the last carb entry, or nil if no entries found
+    func fetchLastCarbEntryTimestamp(hoursBack: Double = 5.0) async throws -> Date? {
+        let now = Date()
+        let startDate = now.addingTimeInterval(-hoursBack * 3600) // Convert hours to seconds
+        
+        let predicate = HKQuery.predicateForSamples(withStart: startDate,
+                                                   end: now,
+                                                   options: .strictEndDate)
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: carbSamples,
+                                      predicate: predicate,
+                                      limit: 1,
+                                      sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate,
+                                                                         ascending: false)]) { (_, samples, error) in
+                if let error = error {
+                    print("⚠️ Last carb entry fetch error: \(error.localizedDescription)")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                guard let sample = samples?.first as? HKQuantitySample else {
+                    print("ℹ️ No carbohydrate entries found in HealthKit")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                let carbGrams = sample.quantity.doubleValue(for: HKUnit.gram())
+                print("🍞 Last carb entry: \(String(format: "%.1f", carbGrams))g at \(sample.endDate)")
+                continuation.resume(returning: sample.endDate)
+            }
+            store.execute(query)
+        }
+    }
+    
+    /// Fetch the timestamp of the most recent insulin delivery entry
+    /// - Parameter hoursBack: Number of hours to look back (default 4 hours)
+    /// - Returns: The timestamp of the last insulin entry, or nil if no entries found
+    func fetchLastInsulinEntryTimestamp(hoursBack: Double = 4.0) async throws -> Date? {
+        let now = Date()
+        let startDate = now.addingTimeInterval(-hoursBack * 3600) // Convert hours to seconds
+        
+        let predicate = HKQuery.predicateForSamples(withStart: startDate,
+                                                   end: now,
+                                                   options: .strictEndDate)
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: bolusSamples,
+                                      predicate: predicate,
+                                      limit: 1,
+                                      sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate,
+                                                                         ascending: false)]) { (_, samples, error) in
+                if let error = error {
+                    print("⚠️ Last insulin entry fetch error: \(error.localizedDescription)")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                guard let sample = samples?.first as? HKQuantitySample else {
+                    print("ℹ️ No insulin entries found in HealthKit")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                let insulinUnits = sample.quantity.doubleValue(for: HKUnit.internationalUnit())
+                print("💉 Last insulin entry: \(String(format: "%.2f", insulinUnits))U at \(sample.endDate)")
+                continuation.resume(returning: sample.endDate)
+            }
+            store.execute(query)
+        }
+    }
+    
     /// Fetch the most recent heart rate value (in beats per minute)
     /// - Parameter minutesBack: Number of minutes to look back (default 30 minutes)
     /// - Returns: Heart rate in beats per minute, or 70.0 as default if no recent data
@@ -555,5 +631,150 @@ final class HealthKitFeatureProvider: ObservableObject {
             }
             store.execute(query)
         }
+    }
+    
+    /// Fetch glucose data from SwiftData cache when HealthKit is unavailable
+    /// - Parameters:
+    ///   - modelContext: SwiftData model context
+    ///   - limit: Number of recent glucose readings to fetch
+    /// - Returns: Array of glucose readings with timestamps and values in mg/dL
+    func fetchGlucoseFromSwiftDataCache(modelContext: ModelContext, limit: Int = 288) async throws -> [(date: Date, value: Double)] {
+        print("📊 Fetching glucose data from SwiftData cache...")
+        
+        let now = Date()
+        let startDate = now.addingTimeInterval(-24 * 3600) // Last 24 hours
+        
+        let fetchDescriptor = FetchDescriptor<HealthKitBGCache>(
+            predicate: #Predicate<HealthKitBGCache> { cache in
+                cache.timestamp >= startDate && cache.timestamp <= now
+            },
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+        )
+        
+        do {
+            var descriptor = fetchDescriptor
+            descriptor.fetchLimit = limit
+            
+            let cachedEntries = try modelContext.fetch(descriptor)
+            
+            if cachedEntries.isEmpty {
+                print("⚠️ No cached glucose data found in SwiftData")
+                throw NSError(domain: "SwiftData", code: 1, userInfo: [NSLocalizedDescriptionKey: "No cached glucose data available"])
+            }
+            
+            // Convert to array of tuples with date and value in mg/dL
+            let glucoseData = cachedEntries.map { cache in
+                (date: cache.timestamp, value: Double(cache.bloodGlucose_mgdl))
+            }.reversed() // Reverse to get chronological order
+            
+            print("✅ Found \(glucoseData.count) cached glucose readings")
+            if let latest = glucoseData.last {
+                print("📈 Latest: \(Int(latest.value)) mg/dL at \(latest.date)")
+            }
+            if let oldest = glucoseData.first {
+                print("📉 Oldest: \(Int(oldest.value)) mg/dL at \(oldest.date)")
+            }
+            
+            return Array(glucoseData)
+        } catch {
+            print("❌ Error fetching from SwiftData cache: \(error)")
+            throw error
+        }
+    }
+    
+    /// Build input window from SwiftData cached glucose data
+    /// - Parameter modelContext: SwiftData model context
+    /// - Returns: MLMultiArray for model input
+    func buildWindowFromSwiftDataCache(modelContext: ModelContext) async throws -> MLMultiArray {
+        print("🔨 Building input window from SwiftData cache...")
+        
+        // Fetch glucose data from cache
+        let glucoseData = try await fetchGlucoseFromSwiftDataCache(modelContext: modelContext, limit: 100)
+        
+        guard !glucoseData.isEmpty else {
+            throw NSError(domain: "SwiftData", code: 2, userInfo: [NSLocalizedDescriptionKey: "No glucose data in cache"])
+        }
+        
+        let now = Date()
+        let step = 5.0 * 60  // 5 min in seconds
+        
+        // Create 5-minute bins for the last 2 hours (24 timesteps)
+        let recentBins = (0..<24).map { i in
+            now.addingTimeInterval(-Double(i) * step)
+        }.reversed().map { $0 }
+        
+        // Initialize arrays for features
+        var glucoseValues = [Double]()
+        var heartRateValues = [Double]()
+        var insulinValues = [Double]()
+        var carbValues = [Double]()
+        
+        // For each bin, find the closest glucose reading
+        for binTime in recentBins {
+            // Find glucose value closest to this bin time
+            var closestGlucose: Double = 100.0 // Default if no data
+            var minTimeDiff = Double.infinity
+            
+            for reading in glucoseData {
+                let timeDiff = abs(reading.date.timeIntervalSince(binTime))
+                if timeDiff < minTimeDiff && timeDiff < step { // Within 5 minutes
+                    minTimeDiff = timeDiff
+                    closestGlucose = reading.value
+                }
+            }
+            
+            glucoseValues.append(closestGlucose)
+            
+            // For now, use default values for other features when using cache
+            // In a full implementation, these could also be cached
+            heartRateValues.append(70.0) // Default heart rate
+            insulinValues.append(0.0)    // Will calculate IOB separately
+            carbValues.append(0.0)       // Will calculate COB separately
+        }
+        
+        // Calculate current IOB and COB (these might still come from HealthKit if available)
+        let iob = try? await Self.calculateActiveInsulinFromHealthKit(store: store, now: now)
+        let cob = try? await Self.calculateActiveCarbsFromHealthKit(store: store, now: now)
+        
+        print("📊 Cache-based features:")
+        print("   Glucose range: \(glucoseValues.min() ?? 0)-\(glucoseValues.max() ?? 0) mg/dL")
+        print("   IOB: \(String(format: "%.2f", iob ?? 0.0)) U")
+        print("   COB: \(String(format: "%.1f", cob ?? 0.0)) g")
+        
+        // Build MLMultiArray [1, 24, 8] for WaveNet models
+        let array = try MLMultiArray(shape: [1, 24, 8], dataType: .double)
+        
+        for i in 0..<24 {
+            let baseIndex = i * 8
+            
+            // Feature 0: Blood glucose (mg/dL)
+            array[baseIndex] = NSNumber(value: glucoseValues[i])
+            
+            // Feature 1: Heart rate (bpm)
+            array[baseIndex + 1] = NSNumber(value: heartRateValues[i])
+            
+            // Feature 2: Active insulin (IOB)
+            array[baseIndex + 2] = NSNumber(value: iob ?? 0.0)
+            
+            // Feature 3: Active carbs (COB)
+            array[baseIndex + 3] = NSNumber(value: cob ?? 0.0)
+            
+            // Feature 4: Time of day (0-23)
+            let hour = Calendar.current.component(.hour, from: recentBins[i])
+            array[baseIndex + 4] = NSNumber(value: Double(hour))
+            
+            // Feature 5: Glucose momentum
+            let momentum = i > 0 ? glucoseValues[i] - glucoseValues[i-1] : 0.0
+            array[baseIndex + 5] = NSNumber(value: momentum)
+            
+            // Feature 6: Minutes since last insulin
+            array[baseIndex + 6] = NSNumber(value: 30.0) // Default
+            
+            // Feature 7: Minutes since last carbs
+            array[baseIndex + 7] = NSNumber(value: 60.0) // Default
+        }
+        
+        print("✅ Built input window from SwiftData cache")
+        return array
     }
 }

@@ -77,7 +77,8 @@ final class SyncManager {
                 lookbackMinutes = isBackground ? 120 : 60
             }
             
-            return try await coordinator.performSync(minutes: lookbackMinutes)
+            let result = try await coordinator.performSync(minutes: lookbackMinutes)
+            return result.newEntries
         } catch {
             print("Sync failed: \(error)")
             return 0

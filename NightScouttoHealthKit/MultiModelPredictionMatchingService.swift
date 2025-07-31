@@ -11,16 +11,19 @@ import HealthKit
 
 /// A specialized service for matching MultiModelPrediction records with actual values for CSV exports
 /// This service finds real blood glucose readings that occurred ~20 minutes after predictions
+/// Updated to use cached HealthKit BG data for improved performance
 class MultiModelPredictionMatchingService {
     private let healthKitManager = HealthKitManager()
     
-    /// Matches predictions with actual HealthKit values specifically for export
-    /// This updates MultiModelPrediction records with correct future readings
-    /// - Parameter predictions: Array of MultiModelPrediction records to match
+    /// Matches predictions with actual HealthKit values specifically for export using cached data
+    /// This updates MultiModelPrediction records with correct future readings from SwiftData cache
+    /// - Parameters:
+    ///   - predictions: Array of MultiModelPrediction records to match
+    ///   - modelContext: SwiftData model context to access cached BG readings
     /// - Returns: The number of predictions that had valid future readings
     @discardableResult
-    func matchPredictionsWithActualReadings(predictions: [MultiModelPrediction]) async throws -> Int {
-        print("🔄 Starting MultiModelPrediction matching process...")
+    func matchPredictionsWithActualReadings(predictions: [MultiModelPrediction], modelContext: ModelContext) async throws -> Int {
+        print("🔄 Starting MultiModelPrediction matching process using cached data...")
         
         if predictions.isEmpty {
             print("ℹ️ No predictions found to match")
@@ -29,7 +32,7 @@ class MultiModelPredictionMatchingService {
         
         print("📊 Found \(predictions.count) predictions to match")
         
-        // Determine time range to check in HealthKit
+        // Determine time range to check in cached data
         guard let oldestPrediction = predictions.map({ $0.timestamp }).min(),
               let newestPrediction = predictions.map({ $0.timestamp }).max() else {
             return 0
@@ -44,15 +47,16 @@ class MultiModelPredictionMatchingService {
         
         print("📆 Time range: \(startDate.formatted()) to \(endDate.formatted())")
         
-        // Fetch all glucose readings from HealthKit in this time range
-        let samples = try await healthKitManager.fetchGlucoseForTimeRange(startDate: startDate, endDate: endDate)
+        // Fetch all cached glucose readings in this time range
+        let cachedReadings = try fetchCachedBGReadings(from: startDate, to: endDate, modelContext: modelContext)
         
-        if samples.isEmpty {
-            print("ℹ️ No HealthKit samples found in the time range")
+        if cachedReadings.isEmpty {
+            print("ℹ️ No cached BG readings found in the time range")
+            print("💡 Tip: Use 'Cache HealthKit BG Data' button to sync HealthKit data first")
             return 0
         }
         
-        print("📊 Found \(samples.count) HealthKit glucose samples for matching")
+        print("📊 Found \(cachedReadings.count) cached BG readings for matching")
         
         // Counter for matched predictions
         var matchedCount = 0
@@ -62,28 +66,28 @@ class MultiModelPredictionMatchingService {
             // The target time is EXACTLY 20 minutes after the prediction timestamp
             let targetTime = prediction.timestamp.addingTimeInterval(20 * 60) // Exactly 20 minutes later
             
-            // Filter samples to ONLY include those that occurred AFTER the prediction time
-            let futureSamples = samples.filter { $0.startDate > prediction.timestamp }
+            // Filter cached readings to ONLY include those that occurred AFTER the prediction time
+            let futureReadings = cachedReadings.filter { $0.timestamp > prediction.timestamp }
             
-            if futureSamples.isEmpty {
-                // Skip if no future samples
+            if futureReadings.isEmpty {
+                // Skip if no future readings
                 continue
             }
             
-            // Find the closest future sample within a reasonable window (5 minutes)
-            if let (sample, value) = findClosestFutureReading(targetTime: targetTime, in: futureSamples, toleranceMinutes: 5) {
+            // Find the closest future reading within a reasonable window (5 minutes)
+            if let (reading, value) = findClosestFutureCachedReading(targetTime: targetTime, in: futureReadings, toleranceMinutes: 5) {
                 // Calculate time difference
-                let timeDifferenceMinutes = (sample.startDate.timeIntervalSince1970 - prediction.timestamp.timeIntervalSince1970) / 60.0
+                let timeDifferenceMinutes = (reading.timestamp.timeIntervalSince1970 - prediction.timestamp.timeIntervalSince1970) / 60.0
                 
                 print("✅ Found future match for prediction at \(prediction.timestamp.formatted()):")
                 print("   → Prediction time: \(prediction.timestamp.formatted())")
-                print("   → Actual reading time: \(sample.startDate.formatted())")
+                print("   → Actual reading time: \(reading.timestamp.formatted())")
                 print("   → Time difference: \(String(format: "%.1f", timeDifferenceMinutes)) minutes after prediction")
                 
                 // Only consider this a valid match for export if it's between 15-25 minutes after prediction
                 if timeDifferenceMinutes >= 15 && timeDifferenceMinutes <= 25 {
                     // Update the prediction with actual BG data
-                    prediction.setActualBG(mmol: value, timestamp: sample.startDate)
+                    prediction.setActualBG(mmol: value, timestamp: reading.timestamp)
                     matchedCount += 1
                 } else {
                     // Clear any existing values if it's outside our desired window
@@ -109,39 +113,54 @@ class MultiModelPredictionMatchingService {
         return matchedCount
     }
     
-    /// Finds the closest future glucose reading to a target time within a tolerance window
+    /// Finds the closest future glucose reading to a target time within a tolerance window using cached data
     /// - Parameters:
     ///   - targetTime: The exact target timestamp to match
-    ///   - samples: Array of future HKQuantitySamples to search within
+    ///   - readings: Array of future HealthKitBGCache readings to search within
     ///   - toleranceMinutes: Maximum time difference in minutes
-    /// - Returns: The closest matching sample and its value in mmol/L, or nil if none found
-    private func findClosestFutureReading(targetTime: Date, in samples: [HKQuantitySample], toleranceMinutes: Double = 5.0) -> (sample: HKQuantitySample, value: Double)? {
+    /// - Returns: The closest matching reading and its value in mmol/L, or nil if none found
+    private func findClosestFutureCachedReading(targetTime: Date, in readings: [HealthKitBGCache], toleranceMinutes: Double = 5.0) -> (reading: HealthKitBGCache, value: Double)? {
         // Convert tolerance to seconds
         let toleranceSeconds = toleranceMinutes * 60
         
-        // Find the closest sample by time difference
-        var closestSample: HKQuantitySample? = nil
+        // Find the closest reading by time difference
+        var closestReading: HealthKitBGCache? = nil
         var minTimeDifference = Double.infinity
         
-        for sample in samples {
-            let timeDifference = abs(sample.startDate.timeIntervalSince(targetTime))
+        for reading in readings {
+            let timeDifference = abs(reading.timestamp.timeIntervalSince(targetTime))
             
-            // Only consider samples within the tolerance window
+            // Only consider readings within the tolerance window
             if timeDifference <= toleranceSeconds && timeDifference < minTimeDifference {
                 minTimeDifference = timeDifference
-                closestSample = sample
+                closestReading = reading
             }
         }
         
-        // If we found a matching sample, return it along with its value in mmol/L
-        if let sample = closestSample {
-            let unit = HKUnit(from: "mg/dL")
-            let valueInMgdl = sample.quantity.doubleValue(for: unit)
-            let valueInMmol = valueInMgdl / 18.0 // Convert to mmol/L
-            
-            return (sample, valueInMmol)
+        // If we found a matching reading, return it along with its value in mmol/L
+        if let reading = closestReading {
+            return (reading, reading.bloodGlucose_mmol)
         }
         
         return nil
+    }
+    
+    /// Fetches cached BG readings from SwiftData within a time range
+    /// - Parameters:
+    ///   - startDate: Start of the time range
+    ///   - endDate: End of the time range
+    ///   - modelContext: SwiftData model context
+    /// - Returns: Array of cached BG readings within the time range
+    private func fetchCachedBGReadings(from startDate: Date, to endDate: Date, modelContext: ModelContext) throws -> [HealthKitBGCache] {
+        let predicate = #Predicate<HealthKitBGCache> { cache in
+            cache.timestamp >= startDate && cache.timestamp <= endDate
+        }
+        
+        let descriptor = FetchDescriptor<HealthKitBGCache>(
+            predicate: predicate,
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        
+        return try modelContext.fetch(descriptor)
     }
 }

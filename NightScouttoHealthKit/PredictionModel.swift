@@ -5,11 +5,11 @@ import Accelerate
 
 // Protocol definition for all model services
 protocol ModelService {
-    func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction
+    func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool, predictionCount: Int) throws -> Prediction
 }
 
 @Model
-final class Prediction: @unchecked Sendable, Identifiable, Hashable {
+final class Prediction: Identifiable, Hashable {
     // Core prediction data (original fields)
     var id: UUID  // Required for Identifiable conformance
     var timestamp: Date
@@ -40,6 +40,7 @@ final class Prediction: @unchecked Sendable, Identifiable, Hashable {
     var modelIndex: Int = 0            // 0=average, 1-5=WaveNet models
     var isAveragePrediction: Bool = false  // Flag to identify average predictions
     var note: String = ""              // Additional metadata/notes about the prediction
+    var predictionCount: Int = 0       // Sequential prediction number (1, 2, 3, ...)
     
     init(timestamp: Date, 
          predictionValue: Double, 
@@ -56,7 +57,8 @@ final class Prediction: @unchecked Sendable, Identifiable, Hashable {
          actualBGTimestamp: Date? = nil,
          modelIndex: Int = 0,
          isAveragePrediction: Bool = false,
-         note: String = "") {
+         note: String = "",
+         predictionCount: Int = 0) {
         
         self.id = UUID()  // Generate unique ID for each instance
         self.timestamp = timestamp
@@ -75,6 +77,7 @@ final class Prediction: @unchecked Sendable, Identifiable, Hashable {
         self.modelIndex = modelIndex
         self.isAveragePrediction = isAveragePrediction
         self.note = note
+        self.predictionCount = predictionCount
     }
     
     // Helper to get formatted prediction value in the appropriate units
@@ -142,7 +145,8 @@ final class BGTCNService: ModelService {
     /// Main entry – pass a raw 24×8 window (Float32, shape (24,8), row‑major).
     func predict(window raw: MLMultiArray,
                  currentBG: Double,
-                 usedMgdl: Bool) throws -> Prediction {
+                 usedMgdl: Bool,
+                 predictionCount: Int = 0) throws -> Prediction {
         // 1. Copy & scale in‑place (raw is (24,8) or (1,24,8))
         let shape = raw.shape.map { $0.intValue }
         guard shape.suffix(2) == [24, 8] else {
@@ -204,7 +208,8 @@ final class BGTCNService: ModelService {
             modelPredictedChange: modelPredictedChange * (usedMgdl ? 18.0 : 1.0),  // Convert change to requested units
             observedTrend: 0,
             actualBG: 0,
-            actualBGTimestamp: nil
+            actualBGTimestamp: nil,
+            predictionCount: predictionCount
         )
     }
     
@@ -288,7 +293,7 @@ final class BGTCN2Service: ModelService {
         // self.scaler = RangeUpTo2Scaler()  // Commented out - scaler now built into ML model
     }
 
-    func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
+    func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool, predictionCount: Int = 0) throws -> Prediction {
         let shape = raw.shape.map { $0.intValue }
         guard shape.suffix(2) == [24, 8] else {
             throw NSError(domain: "BGTCN2", code: 1, userInfo: [NSLocalizedDescriptionKey : "Expected (1,24,8) or (24,8) array"])
@@ -348,7 +353,8 @@ final class BGTCN2Service: ModelService {
             modelPredictedChange: modelPredictedChange * (usedMgdl ? 18.0 : 1.0),
             observedTrend: 0,
             actualBG: 0,
-            actualBGTimestamp: nil
+            actualBGTimestamp: nil,
+            predictionCount: predictionCount
         )
     }
     
@@ -408,7 +414,7 @@ final class BGTCN3Service: ModelService {
         // self.scaler = RangeUpTo3Scaler()  // Commented out - scaler now built into ML model
     }
 
-    func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
+    func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool, predictionCount: Int = 0) throws -> Prediction {
         let shape = raw.shape.map { $0.intValue }
         guard shape.suffix(2) == [24, 8] else {
             throw NSError(domain: "BGTCN3", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected (1,24,8) or (24,8) array"])
@@ -464,7 +470,8 @@ final class BGTCN3Service: ModelService {
             modelPredictedChange: modelPredictedChange * (usedMgdl ? 18.0 : 1.0),
             observedTrend: 0,
             actualBG: 0,
-            actualBGTimestamp: nil
+            actualBGTimestamp: nil,
+            predictionCount: predictionCount
         )
     }
     
@@ -521,7 +528,7 @@ final class BGTCN4Service: ModelService {
         // self.scaler = RangeUpTo4Scaler()  // Commented out - scaler now built into ML model
     }
 
-    func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
+    func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool, predictionCount: Int = 0) throws -> Prediction {
         let shape = raw.shape.map { $0.intValue }
         guard shape.suffix(2) == [24, 8] else {
             throw NSError(domain: "BGTCN4", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected (1,24,8) or (24,8) array"])
@@ -577,7 +584,8 @@ final class BGTCN4Service: ModelService {
             modelPredictedChange: modelPredictedChange * (usedMgdl ? 18.0 : 1.0),
             observedTrend: 0,
             actualBG: 0,
-            actualBGTimestamp: nil
+            actualBGTimestamp: nil,
+            predictionCount: predictionCount
         )
     }
     
@@ -634,7 +642,7 @@ final class BGTCN5Service: ModelService {
         // self.scaler = RangeUpTo5Scaler()  // Commented out - scaler now built into ML model
     }
 
-    func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool) throws -> Prediction {
+    func predict(window raw: MLMultiArray, currentBG: Double, usedMgdl: Bool, predictionCount: Int = 0) throws -> Prediction {
         let shape = raw.shape.map { $0.intValue }
         guard shape.suffix(2) == [24, 8] else {
             throw NSError(domain: "BGTCN5", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected (1,24,8) or (24,8) array"])
@@ -690,7 +698,8 @@ final class BGTCN5Service: ModelService {
             modelPredictedChange: modelPredictedChange * (usedMgdl ? 18.0 : 1.0),
             observedTrend: 0,
             actualBG: 0,
-            actualBGTimestamp: nil
+            actualBGTimestamp: nil,
+            predictionCount: predictionCount
         )
     }
     
@@ -731,3 +740,4 @@ final class BGTCN5Service: ModelService {
         return outputValue
     }
 }
+

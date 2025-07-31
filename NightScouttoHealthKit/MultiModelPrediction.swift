@@ -41,11 +41,23 @@ final class MultiModelPrediction {
     var actualBG_mgdl: Int = 0
     var actualBGTimestamp: Date? = nil
     
-    init(timestamp: Date, currentBG_mmol: Double) {
+    // Time difference between last carb entry and prediction button press
+    var lastCarbEntryTimestamp: Date? = nil
+    var timeSinceLastCarb_minutes: Double = 0.0  // Time difference in minutes
+    
+    // Time difference between last insulin entry and prediction button press
+    var lastInsulinEntryTimestamp: Date? = nil
+    var timeSinceLastInsulin_minutes: Double = 0.0  // Time difference in minutes
+    
+    // Sequential prediction number for tracking progress toward 100 predictions
+    var predictionCount: Int = 0
+    
+    init(timestamp: Date, currentBG_mmol: Double, predictionCount: Int = 0) {
         self.id = UUID()
         self.timestamp = timestamp
         self.currentBG_mmol = currentBG_mmol
         self.currentBG_mgdl = Int(round(currentBG_mmol * 18.0))
+        self.predictionCount = predictionCount
     }
     
     // Helper method to set prediction for a specific model (1 to 6)
@@ -93,5 +105,31 @@ final class MultiModelPrediction {
         self.actualBG_mmol = mmol
         self.actualBG_mgdl = Int(round(mmol * 18.0))
         self.actualBGTimestamp = timestamp
+    }
+    
+    // Helper method to set carb timing information
+    func setCarbTiming(lastCarbTimestamp: Date?, predictionTimestamp: Date) {
+        self.lastCarbEntryTimestamp = lastCarbTimestamp
+        
+        if let lastCarbTimestamp = lastCarbTimestamp {
+            // Calculate time difference in minutes
+            self.timeSinceLastCarb_minutes = (predictionTimestamp.timeIntervalSince1970 - lastCarbTimestamp.timeIntervalSince1970) / 60.0
+        } else {
+            // No carb entry found
+            self.timeSinceLastCarb_minutes = -1.0  // Use -1 to indicate no carb entry found
+        }
+    }
+    
+    // Helper method to set insulin timing information
+    func setInsulinTiming(lastInsulinTimestamp: Date?, predictionTimestamp: Date) {
+        self.lastInsulinEntryTimestamp = lastInsulinTimestamp
+        
+        if let lastInsulinTimestamp = lastInsulinTimestamp {
+            // Calculate time difference in minutes
+            self.timeSinceLastInsulin_minutes = (predictionTimestamp.timeIntervalSince1970 - lastInsulinTimestamp.timeIntervalSince1970) / 60.0
+        } else {
+            // No insulin entry found
+            self.timeSinceLastInsulin_minutes = -1.0  // Use -1 to indicate no insulin entry found
+        }
     }
 }

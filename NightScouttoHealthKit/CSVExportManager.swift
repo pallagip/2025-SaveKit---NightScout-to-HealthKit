@@ -34,9 +34,9 @@ class CSVExportManager {
     func exportStoredPredictions(predictions: [MultiModelPrediction], modelContext: ModelContext) async throws -> URL {
         let csvFilePath = getCSVFilePath()
         
-        // First, try to match predictions with actual readings
+        // First, try to match predictions with actual readings using cached data
         let matchingService = MultiModelPredictionMatchingService()
-        let matchedCount = try await matchingService.matchPredictionsWithActualReadings(predictions: predictions)
+        let matchedCount = try await matchingService.matchPredictionsWithActualReadings(predictions: predictions, modelContext: modelContext)
         print("📊 Matched \(matchedCount) predictions with actual readings")
         
         // Create CSV header
@@ -52,6 +52,9 @@ class CSVExportManager {
         for prediction in predictions.sorted(by: { $0.timestamp < $1.timestamp }) {
             let isoTimestamp = timestampFormatter.string(from: prediction.timestamp)
             var csvLine = isoTimestamp
+            
+            // Add prediction count
+            csvLine += ",\(prediction.predictionCount)"
             
             // WaveNet models 1-5 data
             let modelData = [
@@ -89,6 +92,41 @@ class CSVExportManager {
                 csvLine += ",," // Empty values if no actual reading found
             }
             
+            // Add carb timing data
+            if let lastCarbTimestamp = prediction.lastCarbEntryTimestamp, prediction.timeSinceLastCarb_minutes >= 0 {
+                let carbTimestampString = timestampFormatter.string(from: lastCarbTimestamp)
+                let timeSinceCarb = String(format: "%.1f", prediction.timeSinceLastCarb_minutes)
+                csvLine += ",\(carbTimestampString),\(timeSinceCarb)"
+            } else {
+                // No carb entry found - leave both cells empty
+                csvLine += ",,"
+            }
+            
+            // Add insulin timing data
+            if let lastInsulinTimestamp = prediction.lastInsulinEntryTimestamp, prediction.timeSinceLastInsulin_minutes >= 0 {
+                let insulinTimestampString = timestampFormatter.string(from: lastInsulinTimestamp)
+                let timeSinceInsulin = String(format: "%.1f", prediction.timeSinceLastInsulin_minutes)
+                csvLine += ",\(insulinTimestampString),\(timeSinceInsulin)"
+            } else {
+                // No insulin entry found - leave both cells empty
+                csvLine += ",,"
+            }
+            
+            // Add workout timing data
+            let workoutData = try await fetchWorkoutDataForPrediction(timestamp: prediction.timestamp, modelContext: modelContext)
+            if let workout = workoutData {
+                let workoutType = workout.workoutType ?? ""
+                let workoutEndTimestamp = workout.lastWorkoutEndTime != nil ? timestampFormatter.string(from: workout.lastWorkoutEndTime!) : ""
+                let timeSinceWorkout = workout.timeDifferenceMinutes != nil ? String(format: "%.1f", workout.timeDifferenceMinutes!) : ""
+                let calories = workout.activeKilocalories != nil ? String(format: "%.1f", workout.activeKilocalories!) : ""
+                let duration = workout.workoutDurationMinutes != nil ? String(format: "%.1f", workout.workoutDurationMinutes!) : ""
+                
+                csvLine += ",\(workoutType),\(workoutEndTimestamp),\(timeSinceWorkout),\(calories),\(duration)"
+            } else {
+                // No workout data found - leave all cells empty
+                csvLine += ",,,,,"
+            }
+            
             csvContent += csvLine + "\r\n"
         }
         
@@ -102,7 +140,7 @@ class CSVExportManager {
     // MARK: - Helper Functions
     
     private func createCSVHeader() -> String {
-        var columns: [String] = ["Timestamp_CET"]
+        var columns: [String] = ["Timestamp_CET", "Prediction_Count"]
         
         // Add columns for WaveNet models 1-5
         for modelNum in 1...5 {
@@ -120,11 +158,33 @@ class CSVExportManager {
             "Average_Pred_20min_mgdl"
         ]
         
-        // Add actual BG columns at the end
+        // Add actual BG columns
         columns += [
             "Actual_BG_After_20min_mmol",
             "Actual_BG_After_20min_mgdl"
         ]
+        
+        // Add carb timing columns
+        columns += [
+            "Last_Carb_Entry_Timestamp",
+            "Time_Since_Last_Carb_Minutes"
+        ]
+        
+        // Add insulin timing columns
+        columns += [
+            "Last_Insulin_Entry_Timestamp",
+            "Time_Since_Last_Insulin_Minutes"
+        ]
+        
+        // Add workout timing columns at the end
+        columns += [
+            "Last_Workout_Type",
+            "Last_Workout_End_Timestamp",
+            "Time_Since_Last_Workout_Minutes",
+            "Last_Workout_Calories_kcal",
+            "Last_Workout_Duration_Minutes"
+        ]
+        
         return columns.joined(separator: ",")
     }
     
@@ -149,6 +209,21 @@ class CSVExportManager {
         // Find average prediction within 30 seconds of the MultiModelPrediction timestamp
         return averagePredictions.first { avgPrediction in
             abs(avgPrediction.timestamp.timeIntervalSince(timestamp)) <= 30.0
+        }
+    }
+    
+    // MARK: - Workout Data Helpers
+    
+    private func fetchWorkoutDataForPrediction(timestamp: Date, modelContext: ModelContext) async throws -> WorkoutTimeData? {
+        // Find WorkoutTimeData record that matches the prediction timestamp (within 30 seconds)
+        let descriptor = FetchDescriptor<WorkoutTimeData>(
+            sortBy: [SortDescriptor(\WorkoutTimeData.predictionTimestamp, order: .forward)]
+        )
+        let allWorkoutData = try modelContext.fetch(descriptor)
+        
+        // Find the closest matching workout data entry
+        return allWorkoutData.first { workoutData in
+            abs(workoutData.predictionTimestamp.timeIntervalSince(timestamp)) <= 30.0
         }
     }
     

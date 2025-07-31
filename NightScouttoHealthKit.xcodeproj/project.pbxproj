@@ -6,7 +6,25 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		AD29B73C2E3940EA00D368D9 /* PR GO Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = AD29B7322E3940E800D368D9 /* PR GO Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
+		AD29B7252E393FF500D368D9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AD9FF4F22DCE978500E50BD9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AD29B71C2E393FF300D368D9;
+			remoteInfo = "BG Predict Watch App";
+		};
+		AD29B73A2E3940EA00D368D9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AD9FF4F22DCE978500E50BD9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AD29B7312E3940E800D368D9;
+			remoteInfo = "PR GO Watch App";
+		};
 		AD9FF50A2DCE978700E50BD9 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = AD9FF4F22DCE978500E50BD9 /* Project object */;
@@ -23,13 +41,36 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		AD29B72B2E393FF500D368D9 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				AD29B73C2E3940EA00D368D9 /* PR GO Watch App.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		AD29B7322E3940E800D368D9 /* PR GO Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "PR GO Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD2EC25F2E395A8C00228192 /* BG Predict Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BG Predict Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD2EC2602E395A8C00228192 /* NightScouttoHealthKitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NightScouttoHealthKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD2EC2612E395A8C00228192 /* NightScouttoHealthKitUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NightScouttoHealthKitUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		ADF4CB952DDCC2D80036F790 /* NightScouttoHealthKit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NightScouttoHealthKit.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		ADF4CBB52DDCCD220036F790 /* NightScouttoHealthKitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NightScouttoHealthKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		ADF4CBB62DDCCD220036F790 /* NightScouttoHealthKitUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NightScouttoHealthKitUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		AD29B74D2E39420D00D368D9 /* Exceptions for "PR GO Watch App" folder in "PR GO Watch App" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = AD29B7312E3940E800D368D9 /* PR GO Watch App */;
+		};
 		AD9FF5302DCE9C9E00E50BD9 /* Exceptions for "NightScouttoHealthKit" folder in "NightScouttoHealthKit" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -59,6 +100,14 @@
 /* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		AD29B7332E3940E800D368D9 /* PR GO Watch App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				AD29B74D2E39420D00D368D9 /* Exceptions for "PR GO Watch App" folder in "PR GO Watch App" target */,
+			);
+			path = "PR GO Watch App";
+			sourceTree = "<group>";
+		};
 		AD9FF4FC2DCE978500E50BD9 /* NightScouttoHealthKit */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -71,6 +120,20 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		AD29B71A2E393FF300D368D9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD29B72F2E3940E800D368D9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		AD9FF4F72DCE978500E50BD9 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -100,14 +163,58 @@
 			children = (
 				AD9FF4FC2DCE978500E50BD9 /* NightScouttoHealthKit */,
 				ADF4CB952DDCC2D80036F790 /* NightScouttoHealthKit.app */,
-				ADF4CBB52DDCCD220036F790 /* NightScouttoHealthKitTests.xctest */,
-				ADF4CBB62DDCCD220036F790 /* NightScouttoHealthKitUITests.xctest */,
+				AD29B7322E3940E800D368D9 /* PR GO Watch App.app */,
+				AD29B7332E3940E800D368D9 /* PR GO Watch App */,
+				AD2EC25F2E395A8C00228192 /* BG Predict Watch App.app */,
+				AD2EC2602E395A8C00228192 /* NightScouttoHealthKitTests.xctest */,
+				AD2EC2612E395A8C00228192 /* NightScouttoHealthKitUITests.xctest */,
 			);
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		AD29B71C2E393FF300D368D9 /* BG Predict Watch App */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AD29B7282E393FF500D368D9 /* Build configuration list for PBXNativeTarget "BG Predict Watch App" */;
+			buildPhases = (
+				AD29B7192E393FF300D368D9 /* Sources */,
+				AD29B71A2E393FF300D368D9 /* Frameworks */,
+				AD29B71B2E393FF300D368D9 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "BG Predict Watch App";
+			packageProductDependencies = (
+			);
+			productName = "BG Predict Watch App";
+			productReference = AD2EC25F2E395A8C00228192 /* BG Predict Watch App.app */;
+			productType = "com.apple.product-type.application";
+		};
+		AD29B7312E3940E800D368D9 /* PR GO Watch App */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AD29B73D2E3940EA00D368D9 /* Build configuration list for PBXNativeTarget "PR GO Watch App" */;
+			buildPhases = (
+				AD29B72E2E3940E800D368D9 /* Sources */,
+				AD29B72F2E3940E800D368D9 /* Frameworks */,
+				AD29B7302E3940E800D368D9 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				AD29B7332E3940E800D368D9 /* PR GO Watch App */,
+			);
+			name = "PR GO Watch App";
+			packageProductDependencies = (
+			);
+			productName = "PR GO Watch App";
+			productReference = AD29B7322E3940E800D368D9 /* PR GO Watch App.app */;
+			productType = "com.apple.product-type.application";
+		};
 		AD9FF4F92DCE978500E50BD9 /* NightScouttoHealthKit */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = AD9FF51D2DCE978700E50BD9 /* Build configuration list for PBXNativeTarget "NightScouttoHealthKit" */;
@@ -115,10 +222,13 @@
 				AD9FF4F62DCE978500E50BD9 /* Sources */,
 				AD9FF4F72DCE978500E50BD9 /* Frameworks */,
 				AD9FF4F82DCE978500E50BD9 /* Resources */,
+				AD29B72B2E393FF500D368D9 /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				AD29B7262E393FF500D368D9 /* PBXTargetDependency */,
+				AD29B73B2E3940EA00D368D9 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				AD9FF4FC2DCE978500E50BD9 /* NightScouttoHealthKit */,
@@ -147,7 +257,7 @@
 			packageProductDependencies = (
 			);
 			productName = NightScouttoHealthKitTests;
-			productReference = ADF4CBB52DDCCD220036F790 /* NightScouttoHealthKitTests.xctest */;
+			productReference = AD2EC2602E395A8C00228192 /* NightScouttoHealthKitTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
 		AD9FF5122DCE978700E50BD9 /* NightScouttoHealthKitUITests */ = {
@@ -167,7 +277,7 @@
 			packageProductDependencies = (
 			);
 			productName = NightScouttoHealthKitUITests;
-			productReference = ADF4CBB62DDCCD220036F790 /* NightScouttoHealthKitUITests.xctest */;
+			productReference = AD2EC2612E395A8C00228192 /* NightScouttoHealthKitUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -177,9 +287,16 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 1630;
+				LastSwiftUpdateCheck = 2600;
 				LastUpgradeCheck = 1630;
 				TargetAttributes = {
+					AD29B71C2E393FF300D368D9 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					AD29B7312E3940E800D368D9 = {
+						CreatedOnToolsVersion = 26.0;
+						LastSwiftMigration = 2600;
+					};
 					AD9FF4F92DCE978500E50BD9 = {
 						CreatedOnToolsVersion = 16.3;
 					};
@@ -210,11 +327,27 @@
 				AD9FF4F92DCE978500E50BD9 /* NightScouttoHealthKit */,
 				AD9FF5082DCE978700E50BD9 /* NightScouttoHealthKitTests */,
 				AD9FF5122DCE978700E50BD9 /* NightScouttoHealthKitUITests */,
+				AD29B71C2E393FF300D368D9 /* BG Predict Watch App */,
+				AD29B7312E3940E800D368D9 /* PR GO Watch App */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		AD29B71B2E393FF300D368D9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD29B7302E3940E800D368D9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		AD9FF4F82DCE978500E50BD9 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -239,6 +372,20 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		AD29B7192E393FF300D368D9 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD29B72E2E3940E800D368D9 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		AD9FF4F62DCE978500E50BD9 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -263,6 +410,16 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		AD29B7262E393FF500D368D9 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AD29B71C2E393FF300D368D9 /* BG Predict Watch App */;
+			targetProxy = AD29B7252E393FF500D368D9 /* PBXContainerItemProxy */;
+		};
+		AD29B73B2E3940EA00D368D9 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AD29B7312E3940E800D368D9 /* PR GO Watch App */;
+			targetProxy = AD29B73A2E3940EA00D368D9 /* PBXContainerItemProxy */;
+		};
 		AD9FF50B2DCE978700E50BD9 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = AD9FF4F92DCE978500E50BD9 /* NightScouttoHealthKit */;
@@ -276,6 +433,143 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		AD29B7292E393FF500D368D9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HBDY6QA3N9;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "BG Predict";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.ProDiabeticsTeam.NightScouttoHealthKitv1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ProDiabeticsTeam.NightScouttoHealthKitv1.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		AD29B72A2E393FF500D368D9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HBDY6QA3N9;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "BG Predict";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.ProDiabeticsTeam.NightScouttoHealthKitv1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ProDiabeticsTeam.NightScouttoHealthKitv1.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
+		AD29B73E2E3940EA00D368D9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HBDY6QA3N9;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "PR GO";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.ProDiabeticsTeam.NightScouttoHealthKitv1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ProDiabeticsTeam.NightScouttoHealthKitv1.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "PR GO Watch App/PR GO Watch App-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 11.6;
+			};
+			name = Debug;
+		};
+		AD29B73F2E3940EA00D368D9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HBDY6QA3N9;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "PR GO";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.ProDiabeticsTeam.NightScouttoHealthKitv1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ProDiabeticsTeam.NightScouttoHealthKitv1.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "PR GO Watch App/PR GO Watch App-Bridging-Header.h";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 11.6;
+			};
+			name = Release;
+		};
 		AD9FF51B2DCE978700E50BD9 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -546,6 +840,24 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		AD29B7282E393FF500D368D9 /* Build configuration list for PBXNativeTarget "BG Predict Watch App" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD29B7292E393FF500D368D9 /* Debug */,
+				AD29B72A2E393FF500D368D9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AD29B73D2E3940EA00D368D9 /* Build configuration list for PBXNativeTarget "PR GO Watch App" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD29B73E2E3940EA00D368D9 /* Debug */,
+				AD29B73F2E3940EA00D368D9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		AD9FF4F52DCE978500E50BD9 /* Build configuration list for PBXProject "NightScouttoHealthKit" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

@@ -44,9 +44,38 @@ struct BGPredictionView: View {
     
     // SwiftData access
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Prediction.timestamp, order: .reverse) private var predictions: [Prediction]
+    @Query(sort: \Prediction.timestamp, order: .reverse) private var allPredictions: [Prediction]
+    @Query(sort: \WorkoutTimeData.predictionTimestamp, order: .reverse) private var workoutData: [WorkoutTimeData]
     @State private var refreshID = UUID() // Track when to refresh predictions
     @State private var isRefreshing = false // Track refresh status
+    
+    // Computed property to deduplicate predictions based on timestamp proximity and values
+    private var predictions: [Prediction] {
+        var uniquePredictions: [Prediction] = []
+        
+        for prediction in allPredictions {
+            // Check if we already have a prediction that's very similar
+            let isDuplicate = uniquePredictions.contains { existing in
+                // Consider predictions duplicates if they are within 30 seconds of each other
+                // and have the same prediction value (within 0.1 tolerance)
+                let timeThreshold: TimeInterval = 30.0 // 30 seconds
+                let valueThreshold: Double = 0.1 // 0.1 mmol/L or mg/dL tolerance
+                
+                let timeDifference = abs(existing.timestamp.timeIntervalSince(prediction.timestamp))
+                let valueDifference = abs(existing.predictionValueInMmol - prediction.predictionValueInMmol)
+                
+                return timeDifference <= timeThreshold && valueDifference <= valueThreshold
+            }
+            
+            if !isDuplicate {
+                uniquePredictions.append(prediction)
+            } else {
+                print("🔄 Filtered duplicate prediction: \(prediction.timestamp) with value \(String(format: "%.1f", prediction.predictionValueInMmol)) mmol/L")
+            }
+        }
+        
+        return uniquePredictions
+    }
 
     var body: some View {
         VStack(spacing: 24) {
@@ -170,6 +199,9 @@ struct BGPredictionView: View {
                 } else {
                     // Header row
                     HStack {
+                        Text("#")
+                            .fontWeight(.medium)
+                            .frame(width: 30, alignment: .leading)
                         Text("Date & Time")
                             .fontWeight(.medium)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -188,6 +220,13 @@ struct BGPredictionView: View {
                         LazyVStack(spacing: 4) {
                             ForEach(predictions) { prediction in
                                 HStack {
+                                    // Show prediction count
+                                    Text(prediction.predictionCount > 0 ? "\(prediction.predictionCount)" : "—")
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(prediction.isAveragePrediction ? .blue : .primary)
+                                        .frame(width: 30, alignment: .leading)
+                                    
                                     Text(prediction.formattedDate)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                     
@@ -238,6 +277,10 @@ struct BGPredictionView: View {
             // Request HealthKit authorization from both services
             try await predictionService.requestHealthKitAuthorization()
             try await hk.requestAuth()
+            
+            // Migrate existing predictions to have proper sequential counts
+            // This fixes the issue where existing predictions show "—" instead of numbers
+            predictionService.migratePredictionCounts(modelContext: modelContext)
             
         } catch {
             print("❌ Initialization error: \(error)")
@@ -306,6 +349,9 @@ struct BGPredictionView: View {
             let momentum = calculateMomentum(from: recentReadings)
             let stabilityStatus = determineStabilityStatus(momentum: momentum)
             
+            // Calculate the next prediction count for the new prediction
+            let nextPredictionCount = predictionService.calculateNextPredictionCount(modelContext: modelContext)
+            
             // Create and save the average prediction as a SwiftData object
             let timestamp = Date()
             let averagePrediction = Prediction(
@@ -324,7 +370,8 @@ struct BGPredictionView: View {
                 actualBGTimestamp: nil,
                 modelIndex: 0, // 0 indicates this is an average prediction
                 isAveragePrediction: true,
-                note: "Average of \(modelPredictions.count) WaveNet models"
+                note: "Average of \(modelPredictions.count) WaveNet models",
+                predictionCount: nextPredictionCount
             )
             
             // Save to SwiftData
@@ -467,6 +514,7 @@ struct SettingsView: View {
     // SwiftData context for working with predictions
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \MultiModelPrediction.timestamp, order: .reverse) private var multiModelPredictions: [MultiModelPrediction]
+    @Query(sort: \HealthKitBGCache.timestamp, order: .reverse) private var cachedBGReadings: [HealthKitBGCache]
     // Next sync date (written when a sync is scheduled)
     @AppStorage("nextSyncDate")    private var nextSyncDate           = Date()
     // Blood glucose units preference
@@ -485,6 +533,14 @@ struct SettingsView: View {
     
     // Track UI state
     @State private var isInitialized = false
+    
+    // Computed property for current CET time
+    private var currentCETTime: String {
+        let formatter = DateFormatter()
+        formatter.timeZone = TimeZone(identifier: "Europe/Berlin")
+        formatter.dateFormat = "HH:mm:ss 'CET'"
+        return formatter.string(from: Date())
+    }
 
     var body: some View {
         ScrollView {
@@ -594,6 +650,47 @@ struct SettingsView: View {
                     .foregroundColor(result.contains("failed") ? .red : .green)
                     .padding(.top)
             }
+            
+            Divider().padding(.vertical)
+            
+            // HealthKit BG Cache Sync button
+            Button {
+                Task {
+                    do {
+                        viewModel.syncInProgress = true
+                        
+                        let syncedCount = try await HealthKitBGSyncService.shared.syncHealthKitBGToCache(
+                            modelContext: modelContext,
+                            hoursBack: 24.0
+                        )
+                        
+                        if syncedCount > 0 {
+                            viewModel.lastSyncResult = "Successfully cached \(syncedCount) new BG readings from HealthKit"
+                        } else {
+                            viewModel.lastSyncResult = "No new HealthKit BG readings found to cache"
+                        }
+                        
+                    } catch {
+                        print("⚠️ HealthKit BG sync failed: \(error)")
+                        viewModel.lastSyncResult = "HealthKit BG sync failed: \(error.localizedDescription)"
+                    }
+                    
+                    viewModel.syncInProgress = false
+                }
+            } label: {
+                if viewModel.syncInProgress {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                } else {
+                    Text("Cache HealthKit BG Data (\(cachedBGReadings.count) cached)")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .padding()
+            .background(viewModel.syncInProgress ? Color.gray : Color.purple)
+            .foregroundColor(.white)
+            .cornerRadius(10)
+            .disabled(viewModel.syncInProgress)
 
             // Export predictions button
             Button {
@@ -629,6 +726,81 @@ struct SettingsView: View {
             .tint(.orange)
             .padding(.top, 8)
             .disabled(viewModel.syncInProgress || multiModelPredictions.isEmpty)
+            
+            Divider().padding(.vertical)
+            
+            // MARK: - Notification Testing Section
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Notification System")
+                    .font(.headline)
+                    .padding(.bottom, 4)
+                
+                // Notification status
+                Button("Check Notification Status") {
+                    NotificationManager.shared.checkNotificationStatus()
+                    NotificationManager.shared.getPendingNotificationCount()
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.blue)
+                .foregroundColor(.white)
+                .cornerRadius(10)
+                
+                // Test prediction notification
+                Button("Test Prediction Notification") {
+                    Task {
+                        await NotificationHandler.shared.triggerTestPrediction(modelContainer: modelContext.container)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.orange)
+                .foregroundColor(.white)
+                .cornerRadius(10)
+                
+                // Reschedule notifications
+                Button("Reschedule Notifications") {
+                    NotificationManager.shared.scheduleHourlyNotifications()
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.green)
+                .foregroundColor(.white)
+                .cornerRadius(10)
+                
+                // Cancel all notifications
+                Button("Cancel All Notifications") {
+                    NotificationManager.shared.cancelAllNotifications()
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.red)
+                .foregroundColor(.white)
+                .cornerRadius(10)
+                
+                // Current time info
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Current Time Info:")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    
+                    Text("Time: \(currentCETTime)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Text("Is Scheduled Time: \(NotificationHandler.shared.isScheduledPredictionTime() ? "Yes" : "No")")
+                        .font(.caption)
+                        .foregroundColor(NotificationHandler.shared.isScheduledPredictionTime() ? .green : .secondary)
+                    
+                    if let identifier = NotificationHandler.shared.getCurrentNotificationIdentifier() {
+                        Text("Current ID: \(identifier)")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                    }
+                }
+                .padding()
+                .background(Color(.systemGray6))
+                .cornerRadius(8)
             }
             .padding()
         }
@@ -756,4 +928,6 @@ class ContentViewModel: ObservableObject {
         self.modelContext = context
     }
 }
+
+} // End of SettingsView
 
