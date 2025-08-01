@@ -615,6 +615,22 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
         }
     }
     
+    // MARK: - Test Notification Delivery
+    func testNotificationDelivery() {
+        Task {
+            _ = await SuprSend.shared.track(
+                event: "test_push_notification",
+                properties: [
+                    "distinctId": DISTINCT_ID,
+                    "notification_title": "Test Notification",
+                    "notification_body": "Testing push delivery",
+                    "platform": "ios"
+                ]
+            )
+            print("✅ Test notification event sent")
+        }
+    }
+    
     // MARK: - Debug Helper Methods
     func debugSuprSendSetup() {
         Task {
