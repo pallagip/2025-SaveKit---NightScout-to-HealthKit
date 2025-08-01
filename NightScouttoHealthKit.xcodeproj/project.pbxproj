@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		AD29B73C2E3940EA00D368D9 /* PR GO Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = AD29B7322E3940E800D368D9 /* PR GO Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		EE6173D92E3D0B0200A5CF39 /* SuprSend in Frameworks */ = {isa = PBXBuildFile; productRef = EE6173D82E3D0B0200A5CF39 /* SuprSend */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -136,6 +137,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				EE6173D92E3D0B0200A5CF39 /* SuprSend in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -166,7 +168,15 @@
 				AD2EC25F2E395A8C00228192 /* BG Predict Watch App.app */,
 				AD2EC2602E395A8C00228192 /* NightScouttoHealthKitTests.xctest */,
 				AD2EC2612E395A8C00228192 /* NightScouttoHealthKitUITests.xctest */,
+				EE6173D72E3D0B0200A5CF39 /* Frameworks */,
 			);
+			sourceTree = "<group>";
+		};
+		EE6173D72E3D0B0200A5CF39 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -233,6 +243,7 @@
 			);
 			name = NightScouttoHealthKit;
 			packageProductDependencies = (
+				EE6173D82E3D0B0200A5CF39 /* SuprSend */,
 			);
 			productName = NightScouttoHealthKit;
 			productReference = ADF4CB952DDCC2D80036F790 /* NightScouttoHealthKit.app */;
@@ -317,6 +328,9 @@
 			);
 			mainGroup = AD9FF4F12DCE978500E50BD9;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				EE6173D62E3D06E600A5CF39 /* XCRemoteSwiftPackageReference "suprsend-swift-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AD9FF4F12DCE978500E50BD9;
 			projectDirPath = "";
@@ -701,7 +715,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = NightScouttoHealthKit/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
+				INFOPLIST_KEY_CFBundleDisplayName = NightScouttoHealthKit;
 				INFOPLIST_KEY_NSHealthClinicalHealthRecordsShareUsageDescription = "The app uses HealthData to provide accurate updates.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your health data to sync blood glucose readings from NightScout to HealthKit and create predictions.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs to update your health data with blood glucose readings from NightScout and prediction results.";
@@ -713,7 +727,7 @@
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
-				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "$(WK_COMPANION_BUNDLE_IDENTIFIER:default=com.ProDiabeticsTeam.NightScouttoHealthKitv1)";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.ProDiabeticsTeam.NightScouttoHealthKitv1;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -740,7 +754,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = NightScouttoHealthKit/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
+				INFOPLIST_KEY_CFBundleDisplayName = NightScouttoHealthKit;
 				INFOPLIST_KEY_NSHealthClinicalHealthRecordsShareUsageDescription = "The app uses HealthData to provide accurate updates.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app needs access to your health data to sync blood glucose readings from NightScout to HealthKit and create predictions.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app needs to update your health data with blood glucose readings from NightScout and prediction results.";
@@ -752,7 +766,7 @@
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UIUserInterfaceStyle = Light;
-				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = "$(WK_COMPANION_BUNDLE_IDENTIFIER:default=com.ProDiabeticsTeam.NightScouttoHealthKitv1)";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.ProDiabeticsTeam.NightScouttoHealthKitv1;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -897,6 +911,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		EE6173D62E3D06E600A5CF39 /* XCRemoteSwiftPackageReference "suprsend-swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/suprsend/suprsend-swift-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		EE6173D82E3D0B0200A5CF39 /* SuprSend */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EE6173D62E3D06E600A5CF39 /* XCRemoteSwiftPackageReference "suprsend-swift-sdk" */;
+			productName = SuprSend;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = AD9FF4F22DCE978500E50BD9 /* Project object */;
 }

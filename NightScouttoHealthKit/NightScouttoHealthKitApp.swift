@@ -10,6 +10,7 @@ import SwiftData
 import UIKit
 import BackgroundTasks
 import UserNotifications
+import SuprSend
 
 // MARK: - BGTask Identifiers
 fileprivate let refreshTaskID = "com.ProDiabeticsTeam.NightScouttoHealthKitv1"
@@ -57,6 +58,38 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     ) -> Bool {
         print("🚀 App launched - Background predictions disabled, manual-only mode")
         
+        // Initialize SuprSend with Swift Package Manager
+        // Try different initialization approaches
+        do {
+            // Approach 1: Initialize with public key only
+            let suprSendClient = SuprSendClient(publicKey: "SS.PUBK.C6RFiNwCjPNSIoDiAdR5XnIdXMXESAnL-H5sDfXq3QM")
+            
+            // Store workspace credentials for later use if needed
+            UserDefaults.standard.set("oXLT425KxJdjEsMAnnt7", forKey: "suprsend_workspace_key")
+            UserDefaults.standard.set("SS.WSS.zci-CGoHs4qXAUSYV972XsxZj4TQ6Mgb1iyGbubs", forKey: "suprsend_workspace_secret")
+            
+        } catch {
+            print("❌ SuprSend initialization error: \(error)")
+        }
+        
+        print("📱 SuprSend Swift SDK initialized successfully!")
+        
+        // Set notification center delegate for SuprSend
+        UNUserNotificationCenter.current().delegate = self
+        
+        // Register for push notifications
+        let options: UNAuthorizationOptions = [.alert, .sound, .badge]
+        UNUserNotificationCenter.current().requestAuthorization(options: options) { granted, error in
+            if let error = error {
+                print("Notification permission error: \(error)")
+            }
+            if granted {
+                DispatchQueue.main.async {
+                    UIApplication.shared.registerForRemoteNotifications()
+                }
+            }
+        }
+        
         return true
     }
     
@@ -99,5 +132,51 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 print("Notification permissions \(granted ? "granted" : "denied")")
             }
         }
+    }
+    
+    // MARK: - APNs Token Handling
+    
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        let token = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
+        print("📬 APNs Token: \(token)")
+        // Store token locally for backup
+        UserDefaults.standard.set(token, forKey: "apns_device_token")
+    }
+    
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        print("❌ Failed to register for remote notifications: \(error)")
+    }
+    
+    // MARK: - Background Notification Handling
+    
+    func application(_ application: UIApplication,
+                     didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        // SuprSendClient.shared.trackNotification(userInfo: userInfo) // Method not available in current SDK
+        print("📥 Received remote notification: \(userInfo)")
+        completionHandler(.noData)
+    }
+}
+
+// MARK: - UNUserNotificationCenterDelegate
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    
+    // Handle notifications when app is in foreground
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                            willPresent notification: UNNotification,
+                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    // SuprSendClient.shared.trackNotification(notification: notification) // Method not available in current SDK
+    print("📱 Foreground notification: \(notification.request.content.title)")
+    completionHandler([.alert, .badge, .sound])
+}
+    
+    // Handle notification tap/interaction
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        // SuprSendClient.shared.trackNotification(response: response) // Method not available in current SDK
+        print("👆 Notification tapped: \(response.notification.request.content.title)")
+        completionHandler()
     }
 }
