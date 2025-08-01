@@ -37,8 +37,6 @@ struct NightScouttoHealthKitApp: App {
                     // Initialize WatchConnectivity for Apple Watch communication
                     _ = WatchConnectivityManager.shared
                     print("✅ WatchConnectivityManager initialized")
-                    // Request notification permissions
-                    appDelegate.requestNotificationPermissions()
                 }
         }
     }
@@ -143,16 +141,19 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
     }
     
     // MARK: - Background Notification Handling
+    // Usage in didReceiveRemoteNotification
     func application(_ application: UIApplication,
-                     didReceiveRemoteNotification userInfo: [AnyHashable: Any],
-                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+                    didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                    fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
         Task {
-            print("📥 Received remote notification: \(userInfo)")
+            let convertedInfo = Dictionary(uniqueKeysWithValues:
+                userInfo.compactMap { key, value -> (String, String)? in
+                    guard let stringKey = key as? String else { return nil }
+                    return (stringKey, "\(value)")
+                })
             
-            // Track notification delivery
             await SuprSend.shared.track(event: "notification_delivered",
-                                      properties: ["userInfo": userInfo])
-            
+                                      properties: ["userInfo": convertedInfo])
             completionHandler(.noData)
         }
     }
