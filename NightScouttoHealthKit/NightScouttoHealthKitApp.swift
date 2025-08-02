@@ -165,100 +165,37 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
         }
     }
     
-    // MARK: - Explicit Push Channel Registration
+    // MARK: - Explicit Push Channel Registration (Event-based approach)
     private func registerPushChannelExplicitly(deviceToken: String) async {
-        print("📡 Explicitly registering iOS push channel via REST API...")
+        print("📡 Registering iOS push channel via event-based approach...")
         
-        // Corrected URL format for SuprSend API
-        guard let url = URL(string: "https://api.suprsend.com/v1/users/\(DISTINCT_ID)") else {
-            print("❌ Invalid URL for channel registration")
-            return
-        }
-        
-        // Create the payload with both push channel and app inbox using the same channel ID
-        let payload: [String: Any] = [
-            "$set": [
-                "$iospush": CHANNEL_ID,
-                "$app_inbox": CHANNEL_ID,
-                "device_token": deviceToken,
-                "platform": "ios",
-                "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
-                "last_seen": ISO8601DateFormatter().string(from: Date())
-            ]
-        ]
-        
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) else {
-            print("❌ Failed to serialize channel registration JSON payload")
-            return
-        }
-        
-        if let jsonString = String(data: jsonData, encoding: .utf8) {
-            print("📤 Sending channel registration payload: \(jsonString)")
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"  // Changed from POST to PUT
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(REST_API_KEY)", forHTTPHeaderField: "Authorization")
-        request.httpBody = jsonData
-        
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            
-            if let httpResponse = response as? HTTPURLResponse {
-                print("📡 Channel registration HTTP status: \(httpResponse.statusCode)")
-                
-                let responseString = String(data: data, encoding: .utf8) ?? "No response data"
-                print("📄 Channel registration response: \(responseString)")
-                
-                if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
-                    print("✅ iOS push channel and App Inbox registered successfully")
-                    
-                    // Store success state
-                    UserDefaults.standard.set(true, forKey: "push_channel_registered")
-                    UserDefaults.standard.set(Date(), forKey: "push_channel_registered_date")
-                    
-                    // Track successful registration
-                    _ = await SuprSend.shared.track(
-                        event: "push_channel_registered_successfully",
-                        properties: [
-                            "distinctId": DISTINCT_ID,
-                            "deviceToken": deviceToken,
-                            "channelId": CHANNEL_ID,
-                            "method": "explicit_rest_api",
-                            "timestamp": ISO8601DateFormatter().string(from: Date())
-                        ]
-                    )
-                } else {
-                    print("❌ Failed to register push channel. Status: \(httpResponse.statusCode)")
-                    print("❌ Error response: \(responseString)")
-                    
-                    // Try alternative endpoint
-                    print("🔄 Trying alternative event endpoint...")
-                    await tryEventEndpointRegistration(deviceToken: deviceToken)
-                }
-            }
-        } catch {
-            print("❌ Network error registering push channel: \(error)")
-        }
+        // Use event endpoint as primary method (recommended approach)
+        await tryEventEndpointRegistration(deviceToken: deviceToken)
     }
     
-    // MARK: - Alternative Event Endpoint Registration
+    // MARK: - Event-Based Channel Registration (Corrected Format)
     private func tryEventEndpointRegistration(deviceToken: String) async {
-        print("🔄 Trying event endpoint for channel registration...")
+        print("🔄 Registering channel via event endpoint with correct payload format...")
         
         guard let url = URL(string: "https://hub.suprsend.com/event/") else {
             print("❌ Invalid event endpoint URL")
             return
         }
         
-        // Create an $identify event payload
+        // Create $identify event payload with CORRECT format for $iospush
         let payload: [String: Any] = [
             "event": "$identify",
             "distinct_id": DISTINCT_ID,
             "properties": [
                 "$set": [
-                    "$iospush": CHANNEL_ID,
+                    // CORRECTED: $iospush should be an array of objects, not a string
+                    "$iospush": [
+                        [
+                            "token": deviceToken,
+                            "provider": "apns"
+                        ]
+                    ],
+                    // App Inbox can still use the channel ID
                     "$app_inbox": CHANNEL_ID,
                     "device_token": deviceToken,
                     "platform": "ios",
@@ -274,7 +211,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
         }
         
         if let jsonString = String(data: jsonData, encoding: .utf8) {
-            print("📤 Sending event endpoint payload: \(jsonString)")
+            print("📤 Sending corrected event payload: \(jsonString)")
         }
         
         var request = URLRequest(url: url)
@@ -292,8 +229,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
                 let responseString = String(data: data, encoding: .utf8) ?? "No response data"
                 print("📄 Event endpoint response: \(responseString)")
                 
-                if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
-                    print("✅ Channel registered successfully via event endpoint")
+                // CORRECTED: 202 is also success for async processing
+                if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 || httpResponse.statusCode == 202 {
+                    print("✅ Channel registered successfully via event endpoint (status: \(httpResponse.statusCode))")
                     
                     // Store success state
                     UserDefaults.standard.set(true, forKey: "push_channel_registered")
@@ -305,13 +243,13 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
                         properties: [
                             "distinctId": DISTINCT_ID,
                             "deviceToken": deviceToken,
-                            "channelId": CHANNEL_ID,
-                            "method": "event_endpoint",
+                            "method": "event_endpoint_corrected",
+                            "status_code": httpResponse.statusCode,
                             "timestamp": ISO8601DateFormatter().string(from: Date())
                         ]
                     )
                 } else {
-                    print("❌ Event endpoint also failed. Status: \(httpResponse.statusCode)")
+                    print("❌ Event endpoint failed. Status: \(httpResponse.statusCode)")
                     print("❌ Event endpoint error: \(responseString)")
                     
                     // As a last resort, rely on the Swift SDK's built-in registration
