@@ -47,10 +47,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
     // Use the same distinct ID that appears in your SuprSend dashboard
     private let DISTINCT_ID = "T3L8DD7W3T"
     
-    // Store workspace credentials for API calls
-    private let WORKSPACE_KEY = "oXLT425KxJdjEsMAnnt7"
-    private let WORKSPACE_SECRET = "SS.WSS.zci-CGoHs4qXAUSYV972XsxZj4TQ6Mgb1iyGbubs"
-    private let REST_API_KEY = "SS.NhusD-X7dOCvoI3FYo34Yj2RahZ1cUJ02TzDsv8iGFM"
+    // Your SuprSend public key (keep this as is)
+    private let SUPRSEND_PUBLIC_KEY = "SS.PUBK.61Q4tamBoI9nsScOlZPqNyHPzrIUTGn18cctxwqXAdE"
+    
+    // SuprSend REST API credentials for explicit channel registration
+    private let REST_API_KEY = "SS.9yalT5kZe5R7L3ltb_gz-YGdyEMisMcqqAUEJHzMYA0"
+    private let CHANNEL_ID = "oMaufwD5u3DD5M83WhmOaAbz1bYc22AJKX5Z-fQuC2k"
     
     // MARK: - UIApplicationDelegate
     func application(
@@ -60,12 +62,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
         print("🚀 App launched - Background predictions disabled, manual-only mode")
         
         // Initialize SuprSend with Swift Package Manager
-        _ = SuprSendClient(publicKey: "SS.PUBK.C6RFiNwCjPNSIoDiAdR5XnIdXMXESAnL-H5sDfXq3QM")
-        
-        // Store workspace credentials for later use if needed
-        UserDefaults.standard.set(WORKSPACE_KEY, forKey: "suprsend_workspace_key")
-        UserDefaults.standard.set(WORKSPACE_SECRET, forKey: "suprsend_workspace_secret")
-        UserDefaults.standard.set(REST_API_KEY, forKey: "suprsend_rest_api_key")
+        _ = SuprSendClient(publicKey: SUPRSEND_PUBLIC_KEY)
         
         print("📱 SuprSend Swift SDK initialized successfully!")
         
@@ -145,13 +142,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
             let identifyResult = await SuprSend.shared.identify(distinctID: DISTINCT_ID)
             print("🆔 User identification result: \(identifyResult)")
             
-            // Step 2: The SuprSend Swift SDK should automatically handle device token registration
-            // when the app registers for remote notifications. Let's verify this by sending test data
+            // Step 2: Explicitly register the iOS push channel via REST API
+            // The SDK's automatic registration isn't reliable, so we'll do it manually
+            await registerPushChannelExplicitly(deviceToken: deviceToken)
             
-            // Step 3: Try manual registration via API as backup
-            await registerPushChannelViaAPI(deviceToken: deviceToken)
-            
-            // Step 4: Track the setup event with device token info
+            // Step 3: Track the setup event
             _ = await SuprSend.shared.track(
                 event: "device_setup_complete",
                 properties: [
@@ -165,32 +160,26 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
             
             print("✅ SuprSend setup completed for user: \(DISTINCT_ID)")
             
-            // Step 5: Test the setup immediately
+            // Step 4: Test the setup immediately
             await testNotificationSetup()
         }
     }
     
-    // MARK: - Register Push Channel via REST API
-    private func registerPushChannelViaAPI(deviceToken: String) async {
-        print("📡 Registering iOS push channel via REST API...")
+    // MARK: - Explicit Push Channel Registration
+    private func registerPushChannelExplicitly(deviceToken: String) async {
+        print("📡 Explicitly registering iOS push channel via REST API...")
         
-        guard let workspaceKey = UserDefaults.standard.string(forKey: "suprsend_workspace_key"),
-              let workspaceSecret = UserDefaults.standard.string(forKey: "suprsend_workspace_secret") else {
-            print("❌ Missing workspace credentials")
+        // Corrected URL format for SuprSend API
+        guard let url = URL(string: "https://api.suprsend.com/v1/users/\(DISTINCT_ID)") else {
+            print("❌ Invalid URL for channel registration")
             return
         }
         
-        // Use the correct SuprSend identify endpoint for channel registration
-        guard let url = URL(string: "https://hub.suprsend.com/identify/") else {
-            print("❌ Invalid URL")
-            return
-        }
-        
-        // Create identify payload for iOS push channel registration
+        // Create the payload with both push channel and app inbox using the same channel ID
         let payload: [String: Any] = [
-            "distinct_id": DISTINCT_ID,
-            "$iospush": deviceToken,
             "$set": [
+                "$iospush": CHANNEL_ID,
+                "$app_inbox": CHANNEL_ID,
                 "device_token": deviceToken,
                 "platform": "ios",
                 "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
@@ -198,37 +187,32 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
             ]
         ]
         
-        // Convert to JSON
         guard let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) else {
-            print("❌ Failed to serialize JSON payload")
+            print("❌ Failed to serialize channel registration JSON payload")
             return
         }
         
-        // Debug: Print the payload
         if let jsonString = String(data: jsonData, encoding: .utf8) {
-            print("📤 Sending payload: \(jsonString)")
+            print("📤 Sending channel registration payload: \(jsonString)")
         }
         
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
+        request.httpMethod = "PUT"  // Changed from POST to PUT
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        // Create authorization header using REST API key
         request.setValue("Bearer \(REST_API_KEY)", forHTTPHeaderField: "Authorization")
-        
         request.httpBody = jsonData
         
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             
             if let httpResponse = response as? HTTPURLResponse {
-                print("📡 Push channel registration HTTP status: \(httpResponse.statusCode)")
+                print("📡 Channel registration HTTP status: \(httpResponse.statusCode)")
                 
                 let responseString = String(data: data, encoding: .utf8) ?? "No response data"
-                print("📄 Response: \(responseString)")
+                print("📄 Channel registration response: \(responseString)")
                 
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
-                    print("✅ iOS push channel registered successfully")
+                    print("✅ iOS push channel and App Inbox registered successfully")
                     
                     // Store success state
                     UserDefaults.standard.set(true, forKey: "push_channel_registered")
@@ -240,59 +224,57 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
                         properties: [
                             "distinctId": DISTINCT_ID,
                             "deviceToken": deviceToken,
-                            "method": "rest_api",
+                            "channelId": CHANNEL_ID,
+                            "method": "explicit_rest_api",
                             "timestamp": ISO8601DateFormatter().string(from: Date())
                         ]
                     )
-                    
-                } else if httpResponse.statusCode == 404 {
-                    print("❌ 404 Error - trying alternative endpoint...")
-                    await tryAlternativeRegistrationEndpoint(deviceToken: deviceToken)
-                    
                 } else {
                     print("❌ Failed to register push channel. Status: \(httpResponse.statusCode)")
                     print("❌ Error response: \(responseString)")
                     
-                    // Try the SuprSend Swift SDK method
-                    await trySDKChannelRegistration(deviceToken: deviceToken)
+                    // Try alternative endpoint
+                    print("🔄 Trying alternative event endpoint...")
+                    await tryEventEndpointRegistration(deviceToken: deviceToken)
                 }
             }
         } catch {
             print("❌ Network error registering push channel: \(error)")
-            await trySDKChannelRegistration(deviceToken: deviceToken)
         }
     }
     
-    // MARK: - Try Alternative Registration Endpoint
-    private func tryAlternativeRegistrationEndpoint(deviceToken: String) async {
-        print("🔄 Trying alternative registration endpoint...")
+    // MARK: - Alternative Event Endpoint Registration
+    private func tryEventEndpointRegistration(deviceToken: String) async {
+        print("🔄 Trying event endpoint for channel registration...")
         
-        guard let workspaceKey = UserDefaults.standard.string(forKey: "suprsend_workspace_key"),
-              let workspaceSecret = UserDefaults.standard.string(forKey: "suprsend_workspace_secret") else {
-            print("❌ Missing workspace credentials")
+        guard let url = URL(string: "https://hub.suprsend.com/event/") else {
+            print("❌ Invalid event endpoint URL")
             return
         }
         
-        // Try the SuprSend identify endpoint with user ID
-        guard let url = URL(string: "https://hub.suprsend.com/identify/") else {
-            print("❌ Invalid alternative URL")
-            return
-        }
-        
+        // Create an $identify event payload
         let payload: [String: Any] = [
+            "event": "$identify",
             "distinct_id": DISTINCT_ID,
-            "$iospush": deviceToken,
-            "$set": [
-                "device_token": deviceToken,
-                "platform": "ios",
-                "registration_method": "identify_endpoint",
-                "timestamp": ISO8601DateFormatter().string(from: Date())
+            "properties": [
+                "$set": [
+                    "$iospush": CHANNEL_ID,
+                    "$app_inbox": CHANNEL_ID,
+                    "device_token": deviceToken,
+                    "platform": "ios",
+                    "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
+                    "timestamp": ISO8601DateFormatter().string(from: Date())
+                ]
             ]
         ]
         
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: payload) else {
-            print("❌ Failed to serialize alternative JSON payload")
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) else {
+            print("❌ Failed to serialize event endpoint JSON payload")
             return
+        }
+        
+        if let jsonString = String(data: jsonData, encoding: .utf8) {
+            print("📤 Sending event endpoint payload: \(jsonString)")
         }
         
         var request = URLRequest(url: url)
@@ -305,82 +287,59 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
             let (data, response) = try await URLSession.shared.data(for: request)
             
             if let httpResponse = response as? HTTPURLResponse {
-                print("📡 Alternative endpoint HTTP status: \(httpResponse.statusCode)")
+                print("📡 Event endpoint HTTP status: \(httpResponse.statusCode)")
                 
                 let responseString = String(data: data, encoding: .utf8) ?? "No response data"
-                print("📄 Alternative response: \(responseString)")
+                print("📄 Event endpoint response: \(responseString)")
                 
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
-                    print("✅ iOS push channel registered via alternative endpoint")
+                    print("✅ Channel registered successfully via event endpoint")
+                    
+                    // Store success state
                     UserDefaults.standard.set(true, forKey: "push_channel_registered")
+                    UserDefaults.standard.set(Date(), forKey: "push_channel_registered_date")
+                    
+                    // Track successful registration
+                    _ = await SuprSend.shared.track(
+                        event: "push_channel_registered_via_event_endpoint",
+                        properties: [
+                            "distinctId": DISTINCT_ID,
+                            "deviceToken": deviceToken,
+                            "channelId": CHANNEL_ID,
+                            "method": "event_endpoint",
+                            "timestamp": ISO8601DateFormatter().string(from: Date())
+                        ]
+                    )
                 } else {
-                    print("❌ Alternative endpoint also failed")
-                    await trySDKChannelRegistration(deviceToken: deviceToken)
+                    print("❌ Event endpoint also failed. Status: \(httpResponse.statusCode)")
+                    print("❌ Event endpoint error: \(responseString)")
+                    
+                    // As a last resort, rely on the Swift SDK's built-in registration
+                    print("📱 Falling back to Swift SDK automatic registration...")
                 }
             }
         } catch {
-            print("❌ Alternative endpoint network error: \(error)")
-            await trySDKChannelRegistration(deviceToken: deviceToken)
+            print("❌ Network error with event endpoint: \(error)")
+            print("📱 Falling back to Swift SDK automatic registration...")
         }
-    }
-    
-    // MARK: - Enhanced SDK Channel Registration
-    private func trySDKChannelRegistration(deviceToken: String) async {
-        print("🔄 Trying enhanced SDK channel registration...")
-        
-        // The SuprSend Swift SDK should automatically handle device token registration
-        // when the app calls registerForRemoteNotifications(). Let's verify this by
-        // re-identifying the user and checking if the SDK picks up the token automatically
-        
-        print("🔄 Re-identifying user to trigger automatic channel detection...")
-        let identifyResult = await SuprSend.shared.identify(distinctID: DISTINCT_ID)
-        print("🔄 SDK re-identification result: \(identifyResult)")
-        
-        // Send a test event to see if the channel is working
-        _ = await SuprSend.shared.track(
-            event: "sdk_channel_test",
-            properties: [
-                "distinctId": DISTINCT_ID,
-                "device_token": deviceToken,
-                "platform": "ios",
-                "registration_method": "sdk_automatic",
-                "timestamp": ISO8601DateFormatter().string(from: Date()),
-                "message": "Testing if SDK automatically registered the iOS push channel"
-            ]
-        )
-        
-        print("📱 SDK registration completed - the Swift SDK should handle channel registration automatically")
-        print("📧 Check your SuprSend dashboard for the 'sdk_channel_test' event")
-        
-        // Also try to send a simple identify event that might trigger channel registration
-        _ = await SuprSend.shared.track(
-            event: "$identify",
-            properties: [
-                "distinctId": DISTINCT_ID,
-                "$iospush": deviceToken,
-                "platform": "ios",
-                "timestamp": ISO8601DateFormatter().string(from: Date())
-            ]
-        )
-        
-        print("✅ SDK channel registration attempt completed")
     }
     
     // MARK: - Test Notification Setup
     private func testNotificationSetup() async {
         print("🧪 Testing notification setup...")
         
-        // Send a test event to verify everything is working
+        // Send a test event specifically for iOS push notifications
         _ = await SuprSend.shared.track(
             event: "notification_setup_test",
             properties: [
                 "distinctId": DISTINCT_ID,
+                "channels": ["iospush"],  // Use iospush channel specifically
                 "setup_time": ISO8601DateFormatter().string(from: Date()),
-                "test_message": "This is a test to verify notification channel setup"
+                "test_message": "This is a test to verify iOS push notification channel setup"
             ]
         )
         
-        print("📧 Test event sent - check SuprSend dashboard for delivery")
+        print("📧 Test event sent for iOS push notifications - check SuprSend dashboard for delivery")
     }
     
     // MARK: - Background Notification Handling
@@ -410,15 +369,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
         }
     }
     
-    // MARK: - Background Task Registration (Disabled)
-    private func getModelContainer() -> ModelContainer {
-        do {
-            return try ModelContainer(for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self)
-        } catch {
-            fatalError("Failed to create ModelContainer for background task: \(error)")
-        }
-    }
-    
     // MARK: - App Lifecycle
     func applicationDidEnterBackground(_ application: UIApplication) {
         print("📱 App entered background")
@@ -426,31 +376,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
     
     func applicationWillEnterForeground(_ application: UIApplication) {
         print("📱 App entering foreground")
-        
-        // Optional: Refresh setup when app comes to foreground
-        refreshSetupIfNeeded()
     }
     
     func applicationDidBecomeActive(_ application: UIApplication) {
         print("📱 App became active")
-    }
-    
-    // MARK: - Setup Refresh
-    private func refreshSetupIfNeeded() {
-        guard let deviceToken = UserDefaults.standard.string(forKey: "apns_device_token") else {
-            print("⚠️ No stored device token found")
-            return
-        }
-        
-        let lastRefresh = UserDefaults.standard.double(forKey: "last_setup_refresh")
-        let now = Date().timeIntervalSince1970
-        
-        // Refresh setup every 24 hours
-        if now - lastRefresh > 86400 {
-            print("🔄 Refreshing SuprSend setup...")
-            setupSuprSendWithToken(deviceToken: deviceToken)
-            UserDefaults.standard.set(now, forKey: "last_setup_refresh")
-        }
     }
     
     // MARK: - UNUserNotificationCenterDelegate
@@ -499,34 +428,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
         completionHandler()
     }
     
-    // MARK: - Check Registration Status
-    func checkRegistrationStatus() {
-        Task {
-            guard let deviceToken = UserDefaults.standard.string(forKey: "apns_device_token") else {
-                print("❌ No device token available for status check")
-                return
-            }
-            
-            print("🔍 Registration Status Check:")
-            print("   Distinct ID: \(DISTINCT_ID)")
-            print("   Device Token: \(deviceToken)")
-            print("   Previously Registered: \(UserDefaults.standard.bool(forKey: "push_channel_registered"))")
-            
-            if let regDate = UserDefaults.standard.object(forKey: "push_channel_registered_date") as? Date {
-                print("   Registration Date: \(regDate)")
-            }
-            
-            // Try registration again
-            await registerPushChannelViaAPI(deviceToken: deviceToken)
-        }
-    }
-    
     // MARK: - Manual Test Method (call this from your UI for testing)
     func sendTestNotification() {
         Task {
             print("📧 Sending manual test notification...")
             
-            // First, send a test event
+            // Send a test event that should trigger a push notification
             _ = await SuprSend.shared.track(
                 event: "manual_test_notification",
                 properties: [
@@ -537,97 +444,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
                 ]
             )
             
-            // Also try sending a notification trigger event
-            _ = await SuprSend.shared.track(
-                event: "test_push_notification",
-                properties: [
-                    "distinctId": DISTINCT_ID,
-                    "notification_title": "Test from NightScout App",
-                    "notification_body": "This is a test push notification to verify SuprSend integration",
-                    "timestamp": ISO8601DateFormatter().string(from: Date()),
-                    "platform": "ios"
-                ]
-            )
-            
             print("✅ Manual test notification events sent")
             print("📧 Check your SuprSend dashboard and device for notifications")
-        }
-    }
-    
-    // MARK: - Verify Channel Registration
-    func verifyChannelRegistration() {
-        Task {
-            guard let deviceToken = UserDefaults.standard.string(forKey: "apns_device_token") else {
-                print("❌ No device token available")
-                return
-            }
-            
-            print("🔍 Verifying channel registration...")
-            print("   Distinct ID: \(DISTINCT_ID)")
-            print("   Device Token: \(deviceToken)")
-            
-            // Re-register the channel
-            await registerPushChannelViaAPI(deviceToken: deviceToken)
-            
-            // Send a test event
-            _ = await SuprSend.shared.track(
-                event: "channel_verification_test",
-                properties: [
-                    "distinctId": DISTINCT_ID,
-                    "deviceToken": deviceToken,
-                    "timestamp": ISO8601DateFormatter().string(from: Date())
-                ]
-            )
-            
-            print("✅ Channel verification completed")
-        }
-    }
-    
-    // MARK: - Force Channel Registration
-    func forceChannelRegistration() {
-        Task {
-            print("🔧 Forcing channel registration...")
-            
-            guard let deviceToken = UserDefaults.standard.string(forKey: "apns_device_token") else {
-                print("❌ No device token available")
-                return
-            }
-            
-            // Clear previous registration status
-            UserDefaults.standard.removeObject(forKey: "push_channel_registered")
-            UserDefaults.standard.removeObject(forKey: "push_channel_registered_date")
-            
-            // Force re-registration
-            await registerPushChannelViaAPI(deviceToken: deviceToken)
-            
-            // Send a test event after registration
-            _ = await SuprSend.shared.track(
-                event: "forced_registration_test",
-                properties: [
-                    "distinctId": DISTINCT_ID,
-                    "deviceToken": deviceToken,
-                    "timestamp": ISO8601DateFormatter().string(from: Date()),
-                    "test_type": "manual_force"
-                ]
-            )
-            
-            print("✅ Forced registration completed")
-        }
-    }
-    
-    // MARK: - Test Notification Delivery
-    func testNotificationDelivery() {
-        Task {
-            _ = await SuprSend.shared.track(
-                event: "test_push_notification",
-                properties: [
-                    "distinctId": DISTINCT_ID,
-                    "notification_title": "Test Notification",
-                    "notification_body": "Testing push delivery",
-                    "platform": "ios"
-                ]
-            )
-            print("✅ Test notification event sent")
         }
     }
     
@@ -648,6 +466,70 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
                 print("❌ No device token available - requesting notifications again")
                 requestNotificationPermissions()
             }
+        }
+    }
+    
+    // MARK: - Check Registration Status
+    func checkRegistrationStatus() {
+        Task {
+            guard let deviceToken = UserDefaults.standard.string(forKey: "apns_device_token") else {
+                print("❌ No device token available for status check")
+                return
+            }
+            
+            print("🔍 Registration Status Check:")
+            print("   Distinct ID: \(DISTINCT_ID)")
+            print("   Device Token: \(deviceToken)")
+            
+            // Re-identify user to ensure channel registration
+            let identifyResult = await SuprSend.shared.identify(distinctID: DISTINCT_ID)
+            print("🔄 Re-identification result: \(identifyResult)")
+            
+            // Send test event
+            _ = await SuprSend.shared.track(
+                event: "registration_status_check",
+                properties: [
+                    "distinctId": DISTINCT_ID,
+                    "deviceToken": deviceToken,
+                    "timestamp": ISO8601DateFormatter().string(from: Date())
+                ]
+            )
+            
+            print("✅ Registration status check completed")
+        }
+    }
+    
+    // MARK: - Force User Channel Registration
+    func forceUserChannelRegistration() {
+        Task {
+            guard let deviceToken = UserDefaults.standard.string(forKey: "apns_device_token") else {
+                print("❌ No device token available")
+                return
+            }
+            
+            print("🔧 Forcing user channel registration...")
+            
+            // Step 1: Re-identify the user
+            let identifyResult = await SuprSend.shared.identify(distinctID: DISTINCT_ID)
+            print("🆔 Forced identification result: \(identifyResult)")
+            
+            // Step 2: Explicitly register the push channel
+            await registerPushChannelExplicitly(deviceToken: deviceToken)
+            
+            // Wait a moment then send test event
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+            
+            _ = await SuprSend.shared.track(
+                event: "forced_channel_registration_test",
+                properties: [
+                    "distinctId": DISTINCT_ID,
+                    "deviceToken": deviceToken,
+                    "timestamp": ISO8601DateFormatter().string(from: Date()),
+                    "test_type": "manual_force_registration"
+                ]
+            )
+            
+            print("✅ Forced registration completed")
         }
     }
 }
