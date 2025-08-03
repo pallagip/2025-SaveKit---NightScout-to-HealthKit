@@ -16,8 +16,6 @@ class NotificationManager: ObservableObject {
         // Start background task scheduling immediately
         scheduleBackgroundTasks()
         
-        print("✅ Background automation initialized - predictions will run automatically every 15 minutes")
-        print("🔄 Schedule: 9:00-23:45 CET (68 prediction cycles daily)")
         print("🦖 Process: Fetch → Cache → Predict (all automatic, no user interaction needed)")
     }
     

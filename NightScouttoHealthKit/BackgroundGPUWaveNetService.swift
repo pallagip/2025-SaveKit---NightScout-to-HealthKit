@@ -154,8 +154,8 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
             
             // Build input tensor using HealthKit data or SwiftData cache
             let healthKitProvider = HealthKitFeatureProvider()
-            let inputTensor: MLMultiArray
-            let currentBG: Double
+            var inputTensor: MLMultiArray
+            var currentBG: Double
             
             do {
                 // Try HealthKit first
@@ -207,18 +207,18 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
                 usedMgdlUnits: true,
                 currentBG: currentBG / 18.0, // Store in mmol/L
                 stabilityStatus: "GPU_BACKGROUND",
-                predictionCount: predictionCount,
                 modelOutput: averageOutput,
                 modelPredictedChange: 0.0,
                 observedTrend: 0,
-                actualBG: 0,
-                actualBGTimestamp: nil,
                 modelWeight: 1.0,
                 trendWeight: 0.0,
                 finalPredictedChange: 0.0,
+                actualBG: 0,
+                actualBGTimestamp: nil,
                 modelIndex: 0, // 0 indicates average prediction
                 isAveragePrediction: true,
-                note: "GPU Background: Average of \(predictions.count) WaveNet models"
+                note: "GPU Background: Average of \(predictions.count) WaveNet models",
+                predictionCount: predictionCount
             )
             
             // Save to SwiftData
