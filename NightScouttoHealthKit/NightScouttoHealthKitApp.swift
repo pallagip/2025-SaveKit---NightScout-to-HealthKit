@@ -92,48 +92,70 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     
     // MARK: - OneSignal Notification Handlers Setup
     private func setupOneSignalNotificationListeners() {
-        // Add foreground lifecycle listener
-        OneSignal.Notifications.addForegroundLifecycleListener { event in
-            let notification = event.notification
+        // Create a class conforming to OSNotificationLifecycleListener
+        class ForegroundLifecycleListener: NSObject, OSNotificationLifecycleListener {
+            weak var appDelegate: AppDelegate?
             
-            print("🔔 === ONESIGNAL FOREGROUND NOTIFICATION ===")
-            print("📱 Notification ID: \(notification.notificationId ?? "unknown")")
-            print("📝 Title: \(notification.title ?? "No title")")
-            print("📄 Body: \(notification.body ?? "No body")")
-            print("🔥 TRIGGERING BACKGROUND GPU WAVENET PROCESSING")
-            
-            // Trigger GPU WaveNet processing immediately
-            Task { @MainActor in
-                await BackgroundGPUWaveNetService.shared.triggerManualGPUPrediction()
+            init(appDelegate: AppDelegate) {
+                self.appDelegate = appDelegate
+                super.init()
             }
             
-            // Show custom alert for GPU processing
-            DispatchQueue.main.async {
-                self.showGPUProcessingAlert(notification: notification)
+            func onWillDisplay(event: OSNotificationWillDisplayEvent) {
+                let notification = event.notification
+                
+                print("🔔 === ONESIGNAL FOREGROUND NOTIFICATION ===")
+                print("📱 Notification ID: \(notification.notificationId ?? "unknown")")
+                print("📝 Title: \(notification.title ?? "No title")")
+                print("📄 Body: \(notification.body ?? "No body")")
+                print("🔥 TRIGGERING BACKGROUND GPU WAVENET PROCESSING")
+                
+                // Trigger GPU WaveNet processing immediately
+                Task { @MainActor in
+                    await BackgroundGPUWaveNetService.shared.triggerManualGPUPrediction()
+                }
+                
+                // Show custom alert for GPU processing
+                DispatchQueue.main.async {
+                    self.appDelegate?.showGPUProcessingAlert(notification: notification)
+                }
+                
+                // Allow the notification to display normally
+                // Don't call event.preventDefault() so notification shows
             }
-            
-            // Allow the notification to display normally
-            // Don't call event.preventDefault() so notification shows
         }
         
-        // Add notification click listener
-        OneSignal.Notifications.addClickListener { event in
-            let notification = event.notification
+        // Create a class conforming to OSNotificationClickListener
+        class ClickListener: NSObject, OSNotificationClickListener {
+            weak var appDelegate: AppDelegate?
             
-            print("🔔 === ONESIGNAL NOTIFICATION CLICKED ===")
-            print("📱 Clicked Notification ID: \(notification.notificationId ?? "unknown")")
-            print("🔥 TRIGGERING IMMEDIATE GPU WAVENET PROCESSING")
-            
-            // Trigger GPU WaveNet processing immediately
-            Task { @MainActor in
-                await BackgroundGPUWaveNetService.shared.triggerManualGPUPrediction()
+            init(appDelegate: AppDelegate) {
+                self.appDelegate = appDelegate
+                super.init()
             }
             
-            // Show custom alert for GPU processing
-            DispatchQueue.main.async {
-                self.showGPUProcessingAlert(notification: notification)
+            func onClick(event: OSNotificationClickEvent) {
+                let notification = event.notification
+                
+                print("🔔 === ONESIGNAL NOTIFICATION CLICKED ===")
+                print("📱 Clicked Notification ID: \(notification.notificationId ?? "unknown")")
+                print("🔥 TRIGGERING IMMEDIATE GPU WAVENET PROCESSING")
+                
+                // Trigger GPU WaveNet processing immediately
+                Task { @MainActor in
+                    await BackgroundGPUWaveNetService.shared.triggerManualGPUPrediction()
+                }
+                
+                // Show custom alert for GPU processing
+                DispatchQueue.main.async {
+                    self.appDelegate?.showGPUProcessingAlert(notification: notification)
+                }
             }
         }
+        
+        // Add the listeners
+        OneSignal.Notifications.addForegroundLifecycleListener(ForegroundLifecycleListener(appDelegate: self))
+        OneSignal.Notifications.addClickListener(ClickListener(appDelegate: self))
         
         print("✅ OneSignal notification handlers configured")
     }
