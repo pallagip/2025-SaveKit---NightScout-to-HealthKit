@@ -312,6 +312,19 @@ struct BGPredictionView: View {
         .task {
             await initializeApp()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("PredictionHistoryRefresh"))) { notification in
+            print("🔄 Received prediction history refresh notification")
+            
+            // Force UI refresh by updating the refreshID
+            refreshID = UUID()
+            
+            // Log the refresh details
+            if let userInfo = notification.userInfo {
+                let count = userInfo["predictionCount"] as? Int ?? 0
+                let avgValue = userInfo["averageValue"] as? Double ?? 0.0
+                print("📊 UI refreshed - Predictions: \(count), Avg: \(String(format: "%.1f", avgValue)) mg/dL")
+            }
+        }
         .padding()
     }
 
