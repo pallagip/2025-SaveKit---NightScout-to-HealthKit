@@ -32,6 +32,7 @@ struct ContentView: View {
 struct BGPredictionView: View {
     @StateObject private var predictionService = BGPredictionService()
     @StateObject private var hk = HealthKitFeatureProvider()
+    @StateObject private var gpuService = BackgroundGPUWaveNetService.shared
     @State private var predictText = "—"
     @State private var wavenet1Text: String = "—"
     @State private var wavenet2Text: String = "—"
@@ -158,7 +159,15 @@ struct BGPredictionView: View {
                 HStack {
                     Button("Predict") { Task { await predict() } }
                         .buttonStyle(.borderedProminent)
-                    // Removed personalize button as we're using the pre-trained model directly
+                    
+                    Button("🔥 GPU Predict") { 
+                        Task { 
+                            await gpuService.triggerManualGPUPrediction() 
+                        } 
+                    }
+                    .buttonStyle(.bordered)
+                    .foregroundColor(.orange)
+                    .disabled(gpuService.isProcessing)
                 }
             }
             .padding()
@@ -173,6 +182,17 @@ struct BGPredictionView: View {
                     
                     Spacer()
                     
+                    // GPU Service Status
+                    if gpuService.isProcessing {
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                            Text("GPU")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                    
                     // Manual refresh button
                     Button(action: {
                         refreshPredictionHistory()
@@ -183,6 +203,29 @@ struct BGPredictionView: View {
                     .disabled(isRefreshing)
                 }
                 .padding(.bottom, 4)
+                
+                // Background GPU Statistics
+                if gpuService.backgroundPredictionCount > 0 {
+                    HStack {
+                        Text("🔥 GPU Background:")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                        Text("\(gpuService.backgroundPredictionCount) predictions")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        if gpuService.averagePredictionValue > 0 {
+                            Text("• Avg: \(String(format: "%.1f", gpuService.averagePredictionValue)) mg/dL")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        if let lastPrediction = gpuService.lastBackgroundPrediction {
+                            Text("• Last: \(formatRelativeTime(lastPrediction))")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.bottom, 2)
+                }
                 
                 if predictions.isEmpty {
                     VStack(spacing: 8) {
@@ -501,6 +544,13 @@ struct BGPredictionView: View {
         Task {
             await refreshPredictionHistory()
         }
+    }
+    
+    // Helper function to format relative time for GPU service display
+    private func formatRelativeTime(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
 
