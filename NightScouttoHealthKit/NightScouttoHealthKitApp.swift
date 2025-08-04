@@ -266,6 +266,18 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         print("📦 UserInfo: \(userInfo)")
         print("🔥 TRIGGERING BACKGROUND GPU WAVENET PROCESSING")
         
+        // Extract notification details from userInfo
+        let title = userInfo["aps"] as? [String: Any] != nil ? 
+                   (userInfo["aps"] as! [String: Any])["alert"] as? String ?? "NightScout Notification" :
+                   "NightScout Notification"
+        let body = "Background glucose notification received"
+        
+        // IMMEDIATELY forward to Apple Watch (critical for watch delivery)
+        WatchConnectivityManager.shared.sendOneSignalNotificationToWatch(
+            title: title,
+            body: body
+        )
+        
         // Trigger GPU WaveNet processing in background
         Task { @MainActor in
             await BackgroundGPUWaveNetService.shared.triggerManualGPUPrediction()
