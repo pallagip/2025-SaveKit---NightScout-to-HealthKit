@@ -110,6 +110,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 print("📄 Body: \(notification.body ?? "No body")")
                 print("🔥 TRIGGERING BACKGROUND GPU WAVENET PROCESSING")
                 
+                // Send OneSignal notification to Apple Watch
+                WatchConnectivityManager.shared.sendOneSignalNotificationToWatch(
+                    title: notification.title ?? "NightScout Notification",
+                    body: notification.body ?? "New notification received"
+                )
+                
                 // Trigger GPU WaveNet processing immediately
                 Task { @MainActor in
                     await BackgroundGPUWaveNetService.shared.triggerManualGPUPrediction()
@@ -140,6 +146,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 print("🔔 === ONESIGNAL NOTIFICATION CLICKED ===")
                 print("📱 Clicked Notification ID: \(notification.notificationId ?? "unknown")")
                 print("🔥 TRIGGERING IMMEDIATE GPU WAVENET PROCESSING")
+                
+                // Send OneSignal notification to Apple Watch (for click events too)
+                WatchConnectivityManager.shared.sendOneSignalNotificationToWatch(
+                    title: notification.title ?? "NightScout Notification",
+                    body: notification.body ?? "Notification was tapped"
+                )
                 
                 // Trigger GPU WaveNet processing immediately
                 Task { @MainActor in

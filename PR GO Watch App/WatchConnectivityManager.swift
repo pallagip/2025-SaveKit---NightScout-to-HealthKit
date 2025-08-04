@@ -118,63 +118,118 @@ extension WatchConnectivityManager: WCSessionDelegate {
     
     func session(_ session: WCSession, didReceiveMessage message: [String : Any]) {
         DispatchQueue.main.async {
-            if let type = message["type"] as? String,
-               type == "bg_prediction",
-               let prediction = message["prediction_mmol"] as? Double,
-               let timestamp = message["timestamp"] as? TimeInterval {
-                
-                self.lastPrediction = prediction
-                self.lastPredictionTime = Date(timeIntervalSince1970: timestamp)
-                
-                print("📱 Received prediction from iPhone: \(String(format: "%.1f", prediction)) mmol/L")
-                
-                // Send local notification on watch
-                self.sendLocalWatchNotification(
-                    prediction: prediction,
-                    timestamp: Date(timeIntervalSince1970: timestamp)
-                )
-                
-                // Post notification for UI update
-                NotificationCenter.default.post(
-                    name: NSNotification.Name("BGPredictionUpdate"),
-                    object: nil,
-                    userInfo: [
-                        "prediction": prediction,
-                        "timestamp": Date(timeIntervalSince1970: timestamp)
-                    ]
-                )
+            if let type = message["type"] as? String {
+                switch type {
+                case "bg_prediction":
+                    self.handleBGPrediction(message: message)
+                case "gpu_prediction_result":
+                    self.handleGPUPredictionResult(message: message)
+                case "gpu_processing_status":
+                    self.handleGPUProcessingStatus(message: message)
+                default:
+                    print("⚠️ Unknown message type from iPhone: \(type)")
+                }
             }
         }
     }
     
     func session(_ session: WCSession, didReceiveUserInfo userInfo: [String : Any] = [:]) {
         DispatchQueue.main.async {
-            if let type = userInfo["type"] as? String,
-               type == "bg_prediction",
-               let prediction = userInfo["prediction_mmol"] as? Double,
-               let timestamp = userInfo["timestamp"] as? TimeInterval {
-                
-                self.lastPrediction = prediction
-                self.lastPredictionTime = Date(timeIntervalSince1970: timestamp)
-                
-                print("📱 Received background prediction from iPhone: \(String(format: "%.1f", prediction)) mmol/L")
-                
-                // Send local notification on watch
-                self.sendLocalWatchNotification(
-                    prediction: prediction,
-                    timestamp: Date(timeIntervalSince1970: timestamp)
-                )
-                
-                // Post notification for UI update
-                NotificationCenter.default.post(
-                    name: NSNotification.Name("BGPredictionUpdate"),
-                    object: nil,
-                    userInfo: [
-                        "prediction": prediction,
-                        "timestamp": Date(timeIntervalSince1970: timestamp)
-                    ]
-                )
+            if let type = userInfo["type"] as? String {
+                switch type {
+                case "bg_prediction":
+                    self.handleBGPrediction(message: userInfo)
+                case "gpu_prediction_result":
+                    self.handleGPUPredictionResult(message: userInfo)
+                case "gpu_processing_status":
+                    self.handleGPUProcessingStatus(message: userInfo)
+                case "onesignal_notification":
+                    self.handleOneSignalNotification(message: userInfo)
+                default:
+                    print("⚠️ Unknown background message type from iPhone: \(type)")
+                }
             }
         }
     }
+    
+    // MARK: - Message Handlers
+    private func handleBGPrediction(message: [String: Any]) {
+        guard let prediction = message["prediction_mmol"] as? Double,
+              let timestamp = message["timestamp"] as? TimeInterval else {
+            print("❌ Invalid BG prediction message format")
+            return
+        }
+        
+        self.lastPrediction = prediction
+        self.lastPredictionTime = Date(timeIntervalSince1970: timestamp)
+        
+        print("📱 Received BG prediction from iPhone: \(String(format: "%.1f", prediction)) mmol/L")
+        
+        // Send local notification on watch
+        self.sendLocalWatchNotification(
+            prediction: prediction,
+            timestamp: Date(timeIntervalSince1970: timestamp)
+        )
+        
+        // Post notification for UI update
+        NotificationCenter.default.post(
+            name: NSNotification.Name("BGPredictionUpdate"),
+            object: nil,
+            userInfo: [
+                "prediction": prediction,
+                "timestamp": Date(timeIntervalSince1970: timestamp)
+            ]
+        )
+    }
+    
+    private func handleGPUPredictionResult(message: [String: Any]) {
+        guard let prediction = message["prediction_mmol"] as? Double,
+              let timestamp = message["timestamp"] as? TimeInterval else {
+            print("❌ Invalid GPU prediction result message format")
+            return
+        }
+        
+        print("🧠 Received GPU prediction result from iPhone: \(String(format: "%.1f", prediction)) mmol/L")
+        
+        // Post notification for GPU prediction UI update
+        NotificationCenter.default.post(
+            name: NSNotification.Name("GPUPredictionUpdate"),
+            object: nil,
+            userInfo: [
+                "prediction": prediction,
+                "timestamp": Date(timeIntervalSince1970: timestamp)
+            ]
+        )
+        
+        // GPU prediction result received - UI will update via NotificationCenter
+    }
+    
+    private func handleGPUProcessingStatus(message: [String: Any]) {
+        guard let isProcessing = message["isProcessing"] as? Bool else {
+            print("❌ Invalid GPU processing status message format")
+            return
+        }
+        
+        print("🔄 GPU processing status: \(isProcessing ? "STARTED" : "COMPLETED")")
+        
+        // Post notification for processing status UI update
+        NotificationCenter.default.post(
+            name: NSNotification.Name("GPUProcessingStatus"),
+            object: nil,
+            userInfo: ["isProcessing": isProcessing]
+        )
+    }
+    
+    private func handleOneSignalNotification(message: [String: Any]) {
+        print("🔔 Received OneSignal notification from iPhone")
+        
+        // Post notification to open watch app from deep link (no watch notifications)
+        NotificationCenter.default.post(
+            name: NSNotification.Name("OpenWatchAppFromNotification"),
+            object: nil,
+            userInfo: message
+        )
+    }
+    
+
 }

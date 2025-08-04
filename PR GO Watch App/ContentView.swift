@@ -8,53 +8,63 @@
 import SwiftUI
 import WatchKit
 import UserNotifications
+import WatchConnectivity
 
 struct ContentView: View {
     @State private var currentPrediction: String = "—"
     @State private var predictionTime: String = "—"
     @State private var lastUpdate: Date = Date()
     @State private var isConnected: Bool = false
+    @State private var isProcessingGPU: Bool = false
+    @State private var lastGPUPrediction: String = "—"
+    @State private var lastGPUTime: String = "—"
+    @StateObject private var watchManager = WatchConnectivityManager.shared
     
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 16) {
-                    // Header
-                    VStack(spacing: 4) {
-                        Text("🩸 BG Prediction")
-                            .font(.headline)
-                            .foregroundColor(.blue)
-                        
-                        Text("20-min forecast")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    // Main prediction display
+                   
+                    // GPU Prediction Results
                     VStack(spacing: 8) {
-                        Text(currentPrediction)
-                            .font(.title)
-                            .fontWeight(.bold)
-                            .foregroundColor(.primary)
-                        
-                        Text("mmol/L")
+                        Text("🧠 GPU Prediction")
                             .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding()
-                    .background(Color(.gray))
-                    .cornerRadius(12)
-                    
-                    // Last update info
-                    VStack(spacing: 4) {
-                        Text("Last Update")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.orange)
                         
-                        Text(predictionTime)
+                        Text(lastGPUPrediction)
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.orange)
+                        
+                        Text(lastGPUTime)
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
+                    .padding()
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(10)
+                    
+                    // GPU Prediction Trigger Button
+                    Button(action: {
+                        triggerGPUPrediction()
+                    }) {
+                        HStack {
+                            if isProcessingGPU {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            } else {
+                                Image(systemName: "brain")
+                            }
+                            Text(isProcessingGPU ? "Processing..." : "Trigger GPU")
+                        }
+                        .foregroundColor(.white)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(isProcessingGPU || !isConnected)
                     
                     // Connection status
                     HStack {
@@ -75,11 +85,17 @@ struct ContentView: View {
         .onAppear {
             setupNotificationObserver()
             checkConnectivity()
+            setupWatchConnectivity()
+            requestNotificationPermissions()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenWatchAppFromNotification"))) { _ in
+            // This handles deep linking from notification taps
+            print("🔔 Watch app opened from OneSignal notification tap")
         }
     }
     
     private func setupNotificationObserver() {
-        // Listen for notification updates from iPhone app
+        // Listen for regular prediction updates from iPhone app
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name("BGPredictionUpdate"),
             object: nil,
@@ -92,14 +108,28 @@ struct ContentView: View {
             }
         }
         
-        // Request notification permissions
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
-            DispatchQueue.main.async {
-                if granted {
-                    print("✅ Watch notification permissions granted")
-                } else {
-                    print("❌ Watch notification permissions denied")
-                }
+        // Listen for GPU prediction updates from iPhone app
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("GPUPredictionUpdate"),
+            object: nil,
+            queue: .main
+        ) { notification in
+            if let userInfo = notification.userInfo,
+               let prediction = userInfo["prediction"] as? Double,
+               let timestamp = userInfo["timestamp"] as? Date {
+                updateGPUPrediction(prediction: prediction, timestamp: timestamp)
+            }
+        }
+        
+        // Listen for GPU processing status
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("GPUProcessingStatus"),
+            object: nil,
+            queue: .main
+        ) { notification in
+            if let userInfo = notification.userInfo,
+               let isProcessing = userInfo["isProcessing"] as? Bool {
+                self.isProcessingGPU = isProcessing
             }
         }
     }
@@ -141,15 +171,83 @@ struct ContentView: View {
     }
     
     private func checkConnectivity() {
-        // Check if we can communicate with iPhone app
-        // This is a simplified connectivity check
-        isConnected = WKExtension.shared().applicationState == .active
+        // Use WatchConnectivity for proper connection status
+        isConnected = watchManager.isConnected
         
-        // Update connectivity status every 30 seconds
-        Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { _ in
-            isConnected = WKExtension.shared().applicationState == .active
+        // Update connectivity status every 10 seconds
+        Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { _ in
+            self.isConnected = self.watchManager.isConnected
         }
     }
+    
+    private func setupWatchConnectivity() {
+        // Initialize watch connectivity manager
+        _ = WatchConnectivityManager.shared
+        print("🔗 Watch connectivity initialized for ContentView")
+    }
+    
+    private func requestNotificationPermissions() {
+        // Request comprehensive notification permissions for OneSignal integration
+        UNUserNotificationCenter.current().requestAuthorization(
+            options: [.alert, .sound, .badge, .providesAppNotificationSettings]
+        ) { granted, error in
+            DispatchQueue.main.async {
+                if granted {
+                    print("✅ Watch notification permissions granted for OneSignal")
+                } else {
+                    print("❌ Watch notification permissions denied: \(error?.localizedDescription ?? "unknown")")
+                }
+            }
+        }
+    }
+    
+    private func triggerGPUPrediction() {
+        guard isConnected else {
+            print("⚠️ Cannot trigger GPU prediction - iPhone not connected")
+            return
+        }
+        
+        isProcessingGPU = true
+        
+        // Send message to iPhone to trigger GPU prediction
+        let message = [
+            "type": "trigger_gpu_prediction",
+            "timestamp": Date().timeIntervalSince1970,
+            "source": "watch_button"
+        ] as [String: Any]
+        
+        if WCSession.default.isReachable {
+            WCSession.default.sendMessage(message, replyHandler: { response in
+                DispatchQueue.main.async {
+                    print("✅ GPU prediction request acknowledged by iPhone")
+                    if let success = response["success"] as? Bool, !success {
+                        self.isProcessingGPU = false
+                    }
+                }
+            }) { error in
+                DispatchQueue.main.async {
+                    print("❌ Failed to send GPU prediction request: \(error.localizedDescription)")
+                    self.isProcessingGPU = false
+                }
+            }
+        } else {
+            // Use background transfer if not immediately reachable
+            WCSession.default.transferUserInfo(message)
+            print("📤 Sent GPU prediction request via background transfer")
+        }
+    }
+    
+    private func updateGPUPrediction(prediction: Double, timestamp: Date) {
+        lastGPUPrediction = String(format: "%.1f", prediction)
+        
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        lastGPUTime = formatter.string(from: timestamp)
+        
+        isProcessingGPU = false
+    }
+    
+
 }
 
 #Preview {
