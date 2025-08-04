@@ -188,31 +188,41 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
                 context: context
             )
             
-            // Calculate average prediction
-            let validPredictions = predictions.values.compactMap { $0.modelOutput }
-            guard !validPredictions.isEmpty else {
+            // Calculate average prediction by averaging INDIVIDUAL MODEL PREDICTIONS (not deltas)
+            let individualPredictions = predictions.values.compactMap { $0.predictionValue }
+            guard !individualPredictions.isEmpty else {
                 print("❌ No valid predictions from GPU WaveNet models")
                 self.lastError = "No valid predictions generated"
                 return false
             }
             
-            let averageOutput = validPredictions.reduce(0.0, +) / Double(validPredictions.count)
-            let averagePredictionMgdl = averageOutput * 18.0 // Convert mmol/L to mg/dL
+            // Average the individual model predictions (each is current BG + model delta)
+            let finalPredictionMgdl = individualPredictions.reduce(0.0, +) / Double(individualPredictions.count)
+            
+            // Calculate the overall average change for logging
+            let averageChange = (finalPredictionMgdl - currentBG) / 18.0 // Convert back to mmol/L
+            let changeInMgdl = finalPredictionMgdl - currentBG
+            
+            print("🔮 GPU Prediction Calculation:")
+            print("   Current BG: \(String(format: "%.1f", currentBG)) mg/dL")
+            print("   Individual predictions: \(individualPredictions.map { String(format: "%.1f", $0) }.joined(separator: ", ")) mg/dL")
+            print("   Average prediction: \(String(format: "%.1f", finalPredictionMgdl)) mg/dL")
+            print("   Equivalent change: \(String(format: "%.2f", averageChange)) mmol/L = \(String(format: "%.1f", changeInMgdl)) mg/dL")
             
             // Create and save average prediction
             let timestamp = Date()
             let averagePrediction = Prediction(
                 timestamp: timestamp,
-                predictionValue: averagePredictionMgdl,
+                predictionValue: finalPredictionMgdl,
                 usedMgdlUnits: true,
                 currentBG: currentBG / 18.0, // Store in mmol/L
                 stabilityStatus: "GPU_BACKGROUND",
-                modelOutput: averageOutput,
-                modelPredictedChange: 0.0,
+                modelOutput: averageChange, // Store the average change in mmol/L
+                modelPredictedChange: changeInMgdl, // Store the change in mg/dL
                 observedTrend: 0,
                 modelWeight: 1.0,
                 trendWeight: 0.0,
-                finalPredictedChange: 0.0,
+                finalPredictedChange: changeInMgdl,
                 actualBG: 0,
                 actualBGTimestamp: nil,
                 modelIndex: 0, // 0 indicates average prediction
@@ -226,7 +236,6 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
             
             // Save individual model predictions
             for (modelIndex, prediction) in predictions {
-                prediction.note = "GPU Background: WaveNet\(modelIndex)"
                 context.insert(prediction)
             }
             
@@ -235,16 +244,16 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
             // Update published properties
             self.lastBackgroundPrediction = timestamp
             self.backgroundPredictionCount += 1
-            self.averagePredictionValue = averagePredictionMgdl
+            self.averagePredictionValue = finalPredictionMgdl
             self.lastError = nil
             
             print("✅ === GPU WAVENET BACKGROUND PREDICTION COMPLETE ===")
-            print("📊 Average Prediction: \(String(format: "%.1f", averagePredictionMgdl)) mg/dL")
+            print("📊 Average Prediction: \(String(format: "%.1f", finalPredictionMgdl)) mg/dL")
             print("🔢 Total Background Predictions: \(backgroundPredictionCount)")
             print("💾 Saved \(predictions.count + 1) predictions to SwiftData")
             
             // Send local notification about completion
-            await sendCompletionNotification(averagePrediction: averagePredictionMgdl, modelCount: predictions.count)
+            await sendCompletionNotification(averagePrediction: finalPredictionMgdl, modelCount: predictions.count)
             
             return true
             
