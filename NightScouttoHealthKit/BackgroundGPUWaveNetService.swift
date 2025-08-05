@@ -125,24 +125,24 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
     
     // MARK: - GPU WaveNet Prediction Execution
     @MainActor
-    private func runImmediateGPUWaveNetPrediction() async {
+    private func runImmediateGPUWaveNetPrediction(heartRate: Double) async {
         guard !isProcessing else {
             print("⚠️ GPU WaveNet prediction already in progress, skipping")
             return
         }
         
         print("🚀 === IMMEDIATE GPU WAVENET PREDICTION STARTED ===")
-        await executeGPUWaveNetPrediction(isBackground: false)
+        _ = await executeGPUWaveNetPrediction(isBackground: false, heartRate: heartRate)
     }
     
     @MainActor
     private func runBackgroundGPUWaveNetPrediction() async -> Bool {
         print("🚀 === BACKGROUND GPU WAVENET PREDICTION STARTED ===")
-        return await executeGPUWaveNetPrediction(isBackground: true)
+        return await executeGPUWaveNetPrediction(isBackground: true, heartRate: 0.0)
     }
     
     @MainActor
-    private func executeGPUWaveNetPrediction(isBackground: Bool) async -> Bool {
+    private func executeGPUWaveNetPrediction(isBackground: Bool, heartRate: Double) async -> Bool {
         isProcessing = true
         defer { isProcessing = false }
         
@@ -170,11 +170,23 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
             } catch {
                 // Fallback to SwiftData cache
                 print("⚠️ HealthKit unavailable, using SwiftData cache")
+                print("🔨 Building input window from SwiftData cache...")
                 inputTensor = try await healthKitProvider.buildWindowFromSwiftDataCache(modelContext: context)
-                let glucoseData = try await healthKitProvider.fetchGlucoseFromSwiftDataCache(modelContext: context, limit: 1)
+                
+                // Fetch ALL available glucose data from SwiftData cache (not just 1 reading)
+                let glucoseData = try await healthKitProvider.fetchGlucoseFromSwiftDataCache(modelContext: context, limit: 50)
+                print("✅ Found \(glucoseData.count) cached glucose readings")
+                
                 guard let latestReading = glucoseData.first else {
                     throw NSError(domain: "BackgroundGPU", code: 1, userInfo: [NSLocalizedDescriptionKey: "No glucose data available"])
                 }
+                
+                // Log glucose data range for debugging
+                if let oldestReading = glucoseData.last {
+                    print("📈 Latest: \(Int(latestReading.value)) mg/dL at \(latestReading.date)")
+                    print("📉 Oldest: \(Int(oldestReading.value)) mg/dL at \(oldestReading.date)")
+                }
+                
                 currentBG = latestReading.value
                 print("✅ Using SwiftData cache for GPU prediction")
             }
@@ -190,28 +202,31 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
                 currentBG: currentBG,
                 usedMgdl: true,
                 predictionCount: predictionCount,
-                context: context
+                context: context,
+                heartRate: heartRate
             )
             
             // Calculate average prediction by averaging INDIVIDUAL MODEL PREDICTIONS (not deltas)
-            let individualPredictions = predictions.values.compactMap { $0.predictionValue }
+            // Collect absolute predictions (mg/dL) from each model
+            let individualPredictions = predictions.values.map { $0.predictionValue }
             guard !individualPredictions.isEmpty else {
                 print("❌ No valid predictions from GPU WaveNet models")
                 self.lastError = "No valid predictions generated"
                 return false
             }
             
-            // Average the individual model predictions (each is current BG + model delta)
+            // Average the individual model predictions
+            // Average the absolute predictions to get final glucose prediction
             let finalPredictionMgdl = individualPredictions.reduce(0.0, +) / Double(individualPredictions.count)
-            
-            // Calculate the overall average change for logging
-            let averageChange = (finalPredictionMgdl - currentBG) / 18.0 // Convert back to mmol/L
             let changeInMgdl = finalPredictionMgdl - currentBG
+            let averageChange = changeInMgdl / 18.0 // mmol/L change
+            
+            
             
             print("🔮 GPU Prediction Calculation:")
             print("   Current BG: \(String(format: "%.1f", currentBG)) mg/dL")
             print("   Individual predictions: \(individualPredictions.map { String(format: "%.1f", $0) }.joined(separator: ", ")) mg/dL")
-            print("   Average prediction: \(String(format: "%.1f", finalPredictionMgdl)) mg/dL")
+            print("   Final predicted BG (average): \(String(format: "%.1f", finalPredictionMgdl)) mg/dL")
             print("   Equivalent change: \(String(format: "%.2f", averageChange)) mmol/L = \(String(format: "%.1f", changeInMgdl)) mg/dL")
             
             // Create and save average prediction
@@ -222,8 +237,8 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
                 usedMgdlUnits: true,
                 currentBG: currentBG / 18.0, // Store in mmol/L
                 stabilityStatus: "GPU_BACKGROUND",
-                modelOutput: averageChange, // Store the average change in mmol/L
-                modelPredictedChange: changeInMgdl, // Store the change in mg/dL
+                modelOutput: averageChange, // average change mmol/L
+                modelPredictedChange: changeInMgdl, // change mg/dL
                 observedTrend: 0,
                 modelWeight: 1.0,
                 trendWeight: 0.0,
@@ -232,8 +247,9 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
                 actualBGTimestamp: nil,
                 modelIndex: 0, // 0 indicates average prediction
                 isAveragePrediction: true,
-                note: "GPU Background: Average of \(predictions.count) WaveNet models",
-                predictionCount: predictionCount
+                note: "Average of \(predictions.count) GPU models.",
+                predictionCount: predictionCount,
+                heartRate: heartRate
             )
             
             // Save to SwiftData
@@ -275,7 +291,8 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
         currentBG: Double,
         usedMgdl: Bool,
         predictionCount: Int,
-        context: ModelContext
+        context: ModelContext,
+        heartRate: Double
     ) async -> [Int: Prediction] {
         
         print("🔥 === RUNNING SERIES GPU WAVENET PREDICTIONS ===")
@@ -298,44 +315,72 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
             return copy
         }
         
+        // Run each WaveNet model independently with individual error handling
+        // This ensures all 5 models attempt to run even if one fails
+        
+        // WaveNet 1 - GPU Accelerated
         do {
-            // WaveNet 1 - GPU Accelerated
             print("🔥 Running WaveNet1 on GPU...")
             let windowCopy1 = copyMLMultiArray(window)
-            let prediction1 = try gpuWaveNet1.predict(window: windowCopy1, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+            var prediction1 = try gpuWaveNet1.predict(window: windowCopy1, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+            // prediction1.predictionValue is already absolute (no delta addition needed)
+            prediction1.heartRate = heartRate
             modelPredictions[1] = prediction1
             print("✅ GPU WaveNet1: \(String(format: "%.2f", prediction1.modelOutput)) mmol/L = \(String(format: "%.1f", prediction1.modelOutput * 18.0)) mg/dL")
-            
-            // WaveNet 2 - GPU Accelerated
+        } catch {
+            print("❌ GPU WaveNet1 failed: \(error.localizedDescription)")
+        }
+        
+        // WaveNet 2 - GPU Accelerated
+        do {
             print("🔥 Running WaveNet2 on GPU...")
             let windowCopy2 = copyMLMultiArray(window)
-            let prediction2 = try gpuWaveNet2.predict(window: windowCopy2, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+            var prediction2 = try gpuWaveNet2.predict(window: windowCopy2, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+            // prediction2.predictionValue is already absolute (no delta addition needed)
+            prediction2.heartRate = heartRate
             modelPredictions[2] = prediction2
             print("✅ GPU WaveNet2: \(String(format: "%.2f", prediction2.modelOutput)) mmol/L = \(String(format: "%.1f", prediction2.modelOutput * 18.0)) mg/dL")
-            
-            // WaveNet 3 - GPU Accelerated
+        } catch {
+            print("❌ GPU WaveNet2 failed: \(error.localizedDescription)")
+        }
+        
+        // WaveNet 3 - GPU Accelerated
+        do {
             print("🔥 Running WaveNet3 on GPU...")
             let windowCopy3 = copyMLMultiArray(window)
-            let prediction3 = try gpuWaveNet3.predict(window: windowCopy3, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+            var prediction3 = try gpuWaveNet3.predict(window: windowCopy3, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+            // prediction3.predictionValue is already absolute (no delta addition needed)
+            prediction3.heartRate = heartRate
             modelPredictions[3] = prediction3
             print("✅ GPU WaveNet3: \(String(format: "%.2f", prediction3.modelOutput)) mmol/L = \(String(format: "%.1f", prediction3.modelOutput * 18.0)) mg/dL")
-            
-            // WaveNet 4 - GPU Accelerated
+        } catch {
+            print("❌ GPU WaveNet3 failed: \(error.localizedDescription)")
+        }
+        
+        // WaveNet 4 - GPU Accelerated
+        do {
             print("🔥 Running WaveNet4 on GPU...")
             let windowCopy4 = copyMLMultiArray(window)
-            let prediction4 = try gpuWaveNet4.predict(window: windowCopy4, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+            var prediction4 = try gpuWaveNet4.predict(window: windowCopy4, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+            // prediction4.predictionValue is already absolute (no delta addition needed)
+            prediction4.heartRate = heartRate
             modelPredictions[4] = prediction4
             print("✅ GPU WaveNet4: \(String(format: "%.2f", prediction4.modelOutput)) mmol/L = \(String(format: "%.1f", prediction4.modelOutput * 18.0)) mg/dL")
-            
-            // WaveNet 5 - GPU Accelerated
+        } catch {
+            print("❌ GPU WaveNet4 failed: \(error.localizedDescription)")
+        }
+        
+        // WaveNet 5 - GPU Accelerated
+        do {
             print("🔥 Running WaveNet5 on GPU...")
             let windowCopy5 = copyMLMultiArray(window)
-            let prediction5 = try gpuWaveNet5.predict(window: windowCopy5, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+            var prediction5 = try gpuWaveNet5.predict(window: windowCopy5, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+            // prediction5.predictionValue is already absolute (no delta addition needed)
+            prediction5.heartRate = heartRate
             modelPredictions[5] = prediction5
             print("✅ GPU WaveNet5: \(String(format: "%.2f", prediction5.modelOutput)) mmol/L = \(String(format: "%.1f", prediction5.modelOutput * 18.0)) mg/dL")
-            
         } catch {
-            print("❌ GPU Series Prediction Error: \(error)")
+            print("❌ GPU WaveNet5 failed: \(error.localizedDescription)")
         }
         
         print("🔥 === GPU WAVENET SERIES COMPLETE: \(modelPredictions.count) models ===")
@@ -383,9 +428,9 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
     }
     
     // MARK: - Public Interface
-    func triggerManualGPUPrediction() async {
-        print("🎯 Manual GPU WaveNet prediction triggered")
-        await runImmediateGPUWaveNetPrediction()
+    func triggerManualGPUPrediction(heartRate: Double = 0.0) async {
+        print("🎯 Manual GPU WaveNet prediction triggered with Heart Rate: \(heartRate) BPM")
+        await runImmediateGPUWaveNetPrediction(heartRate: heartRate)
     }
     
     func getBackgroundPredictionStats() -> (count: Int, lastPrediction: Date?, averageValue: Double) {

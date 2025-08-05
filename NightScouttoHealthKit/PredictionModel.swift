@@ -41,6 +41,7 @@ final class Prediction: Identifiable, Hashable {
     var isAveragePrediction: Bool = false  // Flag to identify average predictions
     var note: String = ""              // Additional metadata/notes about the prediction
     var predictionCount: Int = 0       // Sequential prediction number (1, 2, 3, ...)
+    var heartRate: Double = 0.0        // Heart rate in BPM at the time of prediction
     
     init(timestamp: Date, 
          predictionValue: Double, 
@@ -58,7 +59,8 @@ final class Prediction: Identifiable, Hashable {
          modelIndex: Int = 0,
          isAveragePrediction: Bool = false,
          note: String = "",
-         predictionCount: Int = 0) {
+         predictionCount: Int = 0,
+         heartRate: Double = 0.0) {
         
         self.id = UUID()  // Generate unique ID for each instance
         self.timestamp = timestamp
@@ -78,6 +80,7 @@ final class Prediction: Identifiable, Hashable {
         self.isAveragePrediction = isAveragePrediction
         self.note = note
         self.predictionCount = predictionCount
+        self.heartRate = heartRate
     }
     
     // Helper to get formatted prediction value in the appropriate units

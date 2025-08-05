@@ -66,8 +66,59 @@ struct Entry: Codable {
 
 struct Treatment: Codable {
     let date: Date
-    let amount: Double
-    // Add carbs, insulin type, etc., as needed
+    let amount: Double?
+    let carbs: Double?
+    let insulin: Double?
+    let eventType: String?
+    let _id: String // NightScout treatment ID
+    let enteredBy: String?
+    
+    // Custom CodingKeys to handle the JSON format from Nightscout
+    private enum CodingKeys: String, CodingKey {
+        case date = "date"
+        case amount = "amount"
+        case carbs = "carbs" 
+        case insulin = "insulin"
+        case eventType = "eventType"
+        case _id = "_id"
+        case enteredBy = "enteredBy"
+    }
+    
+    // Custom initializer to handle the date formats from Nightscout
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        // Handle date - similar to Entry struct
+        if let dateMillis = try? container.decode(Double.self, forKey: .date) {
+            self.date = Date(timeIntervalSince1970: dateMillis / 1000.0)
+        } else if let dateString = try? container.decode(String.self, forKey: .date) {
+            let formatter = ISO8601DateFormatter()
+            guard let parsedDate = formatter.date(from: dateString) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .date,
+                    in: container,
+                    debugDescription: "Date string doesn't match expected format"
+                )
+            }
+            self.date = parsedDate
+        } else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.date,
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Missing date value"
+                )
+            )
+        }
+        
+        // Handle optional fields
+        self.amount = try? container.decode(Double.self, forKey: .amount)
+        self.carbs = try? container.decode(Double.self, forKey: .carbs)
+        self.insulin = try? container.decode(Double.self, forKey: .insulin)
+        self.eventType = try? container.decode(String.self, forKey: .eventType)
+        self._id = try container.decode(String.self, forKey: ._id)
+        self.enteredBy = try? container.decode(String.self, forKey: .enteredBy)
+    }
 }
 
 class NightscoutService {
@@ -136,5 +187,62 @@ class NightscoutService {
         // Create JSON decoder with appropriate strategies
         let decoder = JSONDecoder()
         return try decoder.decode([Entry].self, from: data)
+    }
+    
+    func fetchTreatments(hours: Int = 24) async throws -> [Treatment] {
+        // Calculate time 'hours' ago for finding recent treatments
+        let now = Date()
+        let hoursAgo = now.addingTimeInterval(-Double(hours * 3600))
+        let millisSinceEpoch = Int(hoursAgo.timeIntervalSince1970 * 1000)
+        
+        // Build URL with query parameters for treatments
+        var components = URLComponents(url: baseURL.appendingPathComponent("api/v1/treatments.json"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "find[date][$gte]", value: "\(millisSinceEpoch)"),
+            URLQueryItem(name: "sort$desc", value: "date"),
+            URLQueryItem(name: "count", value: "1000")  // Get all treatments in timeframe
+        ]
+        
+        guard let url = components.url else {
+            print("⚠️ Invalid treatments URL construction")
+            throw URLError(.badURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        
+        // Set authentication headers
+        request.setValue(apiSecret, forHTTPHeaderField: "API-SECRET")
+        request.setValue(apiToken, forHTTPHeaderField: "API-TOKEN")
+        
+        // Log the outgoing request
+        print("🔍 TREATMENTS REQUEST: \(hours) hours of treatment data since \(hoursAgo)")
+        NetworkLogger.log(request: request)
+        
+        let startTime = Date()
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let endTime = Date()
+        
+        // Log raw data and response
+        print("📦 Raw Treatments Response Data: \(String(data: data, encoding: .utf8) ?? "Unable to convert to string")")
+        
+        // Log the incoming response
+        NetworkLogger.log(
+            response: response as? HTTPURLResponse,
+            data: data,
+            error: nil
+        )
+        
+        // Print timing information
+        print("⏱️ Treatments API Call Duration: \(endTime.timeIntervalSince(startTime)) seconds")
+        
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            print("⚠️ Treatments HTTP Error: \(String(describing: response))")
+            throw URLError(.badServerResponse)
+        }
+        
+        // Create JSON decoder with appropriate strategies
+        let decoder = JSONDecoder()
+        return try decoder.decode([Treatment].self, from: data)
     }
 }

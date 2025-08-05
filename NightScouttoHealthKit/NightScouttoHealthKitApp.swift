@@ -17,7 +17,7 @@ struct NightScouttoHealthKitApp: App {
     // Create the model container that will be shared across the app
     let modelContainer: ModelContainer = {
         do {
-            return try ModelContainer(for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self)
+            return try ModelContainer(for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self, NightScoutInsulinCache.self, NightScoutCarbCache.self)
         } catch {
             fatalError("Failed to create ModelContainer: \(error)")
         }
@@ -258,6 +258,18 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
         print("❌ Failed to register for remote notifications: \(error)")
+    }
+    
+    // MARK: - App Lifecycle - Automatic HealthKit Sync
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        print("🔄 === APP BECAME ACTIVE - TRIGGERING HEALTHKIT SYNC ===")
+        
+        // Automatically sync HealthKit insulin and carb data to SwiftData
+        // This ensures SwiftData pairs are always fresh for background predictions
+        Task {
+            let syncResults = await WatchConnectivityManager.shared.performHealthKitToSwiftDataSync()
+            print("✅ Automatic HealthKit sync completed - Insulin: \(syncResults.insulin), Carbs: \(syncResults.carbs)")
+        }
     }
     
     // Handle background remote notifications

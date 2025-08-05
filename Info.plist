@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Allow background glucose prediction to read your heart rate data for more accurate results.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Allow background glucose prediction to analyze and write prediction metrics to Health data.</string>
+</dict>
+</plist>

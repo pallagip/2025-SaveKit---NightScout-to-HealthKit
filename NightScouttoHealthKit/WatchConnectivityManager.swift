@@ -9,9 +9,12 @@ import Foundation
 import WatchConnectivity
 import SwiftData
 import UIKit
+import HealthKit
+import HealthKitUI
 
 class WatchConnectivityManager: NSObject, ObservableObject {
     static let shared = WatchConnectivityManager()
+    private let healthStore = HKHealthStore()
     
     @Published var isWatchConnected = false
     @Published var isPaired = false
@@ -210,7 +213,9 @@ extension WatchConnectivityManager: WCSessionDelegate {
         if let type = message["type"] as? String {
             switch type {
             case "trigger_gpu_prediction":
-                handleGPUPredictionRequest(message: message, replyHandler: replyHandler)
+                // Extract heart rate if available
+                let heartRate = message["heart_rate"] as? Double ?? 0.0
+                handleGPUPredictionRequest(message: message, heartRate: heartRate, replyHandler: replyHandler)
             default:
                 print("⚠️ Unknown message type from watch: \(type)")
                 replyHandler(["status": "unknown_type"])
@@ -227,7 +232,9 @@ extension WatchConnectivityManager: WCSessionDelegate {
         if let type = userInfo["type"] as? String {
             switch type {
             case "trigger_gpu_prediction":
-                handleGPUPredictionRequest(message: userInfo)
+                // Extract heart rate if available
+                let heartRate = userInfo["heart_rate"] as? Double ?? 0.0
+                handleGPUPredictionRequest(message: userInfo, heartRate: heartRate)
             default:
                 print("⚠️ Unknown background message type from watch: \(type)")
             }
@@ -235,9 +242,13 @@ extension WatchConnectivityManager: WCSessionDelegate {
     }
     
     // MARK: - GPU Prediction Handling
-    private func handleGPUPredictionRequest(message: [String: Any], replyHandler: (([String: Any]) -> Void)? = nil) {
+    private func handleGPUPredictionRequest(message: [String: Any], heartRate: Double, replyHandler: (([String: Any]) -> Void)? = nil) {
+        print("❤️ Received Heart Rate from watch: \(heartRate) BPM")
         print("🧠 Processing comprehensive GPU prediction request from watch")
-        print("📱 App state: \(UIApplication.shared.applicationState.rawValue) (0=active, 1=inactive, 2=background)")
+        // Check app state on main thread
+        Task { @MainActor in
+            print("📱 App state: \(UIApplication.shared.applicationState.rawValue) (0=active, 1=inactive, 2=background)")
+        }
         
         // Start background task assertion to prevent app suspension during processing
         startBackgroundTaskForWatchRequest()
@@ -250,77 +261,531 @@ extension WatchConnectivityManager: WCSessionDelegate {
         
         // Trigger comprehensive prediction process asynchronously
         Task { @MainActor in
-            do {
-                print("🚀 === STARTING COMPREHENSIVE PREDICTION PROCESS FROM WATCH ===")
+            print("🚀 === COMPREHENSIVE WATCH-TRIGGERED PREDICTION ===")
+            
+            // Step 1: Comprehensive sync (glucose from NightScout + insulin/carbs from HealthKit to SwiftData)
+            print("🔄 Step 1/2: Comprehensive data sync...")
+            let syncResults = await self.performComprehensiveNightScoutSync()
+            print("✅ Sync completed - Glucose: \(syncResults.glucose), Insulin: \(syncResults.insulin), Carbs: \(syncResults.carbs)")
+            
+            // Step 2: GPU prediction using fresh SwiftData
+            // Step 2: Trigger GPU processing with the latest synced data and heart rate
+            await BackgroundGPUWaveNetService.shared.triggerManualGPUPrediction(heartRate: heartRate)
+            
+            // Get the latest prediction result after processing
+            let predictionStats = BackgroundGPUWaveNetService.shared.getBackgroundPredictionStats()
+            
+            if predictionStats.averageValue > 0, let lastPredictionTime = predictionStats.lastPrediction {
+                // Convert mg/dL back to mmol/L for watch display
+                let predictionMmol = predictionStats.averageValue / 18.0
+                print("✅ === COMPREHENSIVE PREDICTION COMPLETE FROM WATCH ===")
+                print("📊 Summary:")
+                print("   - Glucose sync: \(syncResults.glucose) readings")
+                print("   - Insulin cache: \(syncResults.insulin) entries")
+                print("   - Carbs cache: \(syncResults.carbs) entries")
+                print("   - GPU prediction: \(String(format: "%.1f", predictionMmol)) mmol/L")
                 
-                // Step 1: Sync data from cloud (same as "Sync Data for 24h")
-                print("📡 Step 1/3: Syncing data from cloud...")
-                let syncedCount = await SyncManager.shared.performSync(isBackground: false)
-                print("✅ Cloud sync completed: \(syncedCount) new readings synced")
+                // Send comprehensive result to watch
+                self.sendGPUPredictionToWatch(
+                    prediction: predictionMmol,
+                    timestamp: lastPredictionTime
+                )
                 
-                // Step 2: Cache HealthKit BG data (same as "Cache HealthKit BG Data")
-                // Make this step optional when HealthKit is inaccessible (device locked)
-                print("💾 Step 2/3: Caching HealthKit BG data...")
-                var cachedCount = 0
-                if let modelContainer = BackgroundGPUWaveNetService.shared.getModelContainer() {
-                    let modelContext = ModelContext(modelContainer)
-                    do {
-                        cachedCount = try await HealthKitBGSyncService.shared.syncHealthKitBGToCache(
-                            modelContext: modelContext,
-                            hoursBack: 24.0
-                        )
-                        print("✅ HealthKit data cached: \(cachedCount) new BG readings cached")
-                    } catch {
-                        print("⚠️ HealthKit caching failed (likely device locked): \(error.localizedDescription)")
-                        print("🔄 Continuing with GPU prediction using existing SwiftData cache...")
-                        cachedCount = 0 // Set to 0 but continue processing
-                    }
-                } else {
-                    print("⚠️ Model container not available for caching HealthKit data")
-                }
-                
-                // Step 3: Run GPU prediction (same as "GPU Predict")
-                print("🔥 Step 3/3: Running GPU WaveNet prediction...")
-                await BackgroundGPUWaveNetService.shared.triggerManualGPUPrediction()
-                
-                // Get the latest prediction result after processing
-                let predictionStats = BackgroundGPUWaveNetService.shared.getBackgroundPredictionStats()
-                
-                if predictionStats.averageValue > 0, let lastPredictionTime = predictionStats.lastPrediction {
-                    // Convert mg/dL back to mmol/L for watch display
-                    let predictionMmol = predictionStats.averageValue / 18.0
-                    print("✅ === COMPREHENSIVE PREDICTION COMPLETE FROM WATCH ===")
-                    print("📊 Summary:")
-                    print("   - Cloud sync: \(syncedCount) readings")
-                    print("   - HealthKit cache: \(cachedCount) readings")
-                    print("   - GPU prediction: \(String(format: "%.1f", predictionMmol)) mmol/L")
-                    
-                    // Send comprehensive result to watch
-                    self.sendGPUPredictionToWatch(
-                        prediction: predictionMmol,
-                        timestamp: lastPredictionTime
-                    )
-                    
-                    // Send completion status
-                    self.sendGPUProcessingStatusToWatch(isProcessing: false)
-                    
-                    // End background task
-                    self.endBackgroundTaskForWatchRequest()
-                } else {
-                    print("❌ GPU prediction completed but no result available")
-                    self.sendGPUProcessingStatusToWatch(isProcessing: false)
-                    
-                    // End background task
-                    self.endBackgroundTaskForWatchRequest()
-                }
-            } catch {
-                print("❌ Comprehensive prediction process error: \(error.localizedDescription)")
+                // Send completion status
                 self.sendGPUProcessingStatusToWatch(isProcessing: false)
                 
-                // End background task on error
+                // End background task
+                self.endBackgroundTaskForWatchRequest()
+            } else {
+                print("❌ GPU prediction completed but no result available")
+                self.sendGPUProcessingStatusToWatch(isProcessing: false)
+                
+                // End background task
                 self.endBackgroundTaskForWatchRequest()
             }
         }
+    }
+    
+    // MARK: - HealthKit to SwiftData Sync
+    /// Sync HealthKit insulin and carb data to SwiftData for background use
+    func performHealthKitToSwiftDataSync() async -> (insulin: Int, carbs: Int) {
+        print("🍿 === HEALTHKIT TO SWIFTDATA SYNC ===")
+        
+        guard let modelContainer = await BackgroundGPUWaveNetService.shared.getModelContainer() else {
+            print("❌ Model container not available for HealthKit sync")
+            return (0, 0)
+        }
+        
+        let modelContext = ModelContext(modelContainer)
+        var insulinCount = 0
+        var carbsCount = 0
+        
+        do {
+            let healthStore = HKHealthStore()
+            
+            // Cache HealthKit insulin data to SwiftData (app must be foregrounded)
+            print("💉 Caching HealthKit insulin data to SwiftData...")
+            
+            do {
+                // Fetch insulin from HealthKit (last 4 hours)
+                let insulinType = HKQuantityType.quantityType(forIdentifier: .insulinDelivery)!
+                let fourHoursAgo = Date().addingTimeInterval(-4 * 3600)
+                let predicate = HKQuery.predicateForSamples(withStart: fourHoursAgo, end: Date(), options: .strictStartDate)
+                
+                let insulinSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+                    let query = HKSampleQuery(sampleType: insulinType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+                        if let error = error {
+                            continuation.resume(throwing: error)
+                        } else {
+                            continuation.resume(returning: samples as? [HKQuantitySample] ?? [])
+                        }
+                    }
+                    healthStore.execute(query)
+                }
+                
+                // Cache insulin samples to SwiftData
+                for sample in insulinSamples {
+                    let insulinAmount = sample.quantity.doubleValue(for: HKUnit.internationalUnit())
+                    let healthKitUUID = sample.uuid.uuidString
+                    
+                    // Check for existing insulin entry by HealthKit UUID
+                    let fetchDescriptor = FetchDescriptor<NightScoutInsulinCache>(
+                        predicate: #Predicate<NightScoutInsulinCache> { cache in
+                            cache.nightScoutId == healthKitUUID
+                        }
+                    )
+                    
+                    let existingInsulin = try modelContext.fetch(fetchDescriptor)
+                    if existingInsulin.isEmpty {
+                        let insulinCache = NightScoutInsulinCache(
+                            timestamp: sample.startDate,
+                            insulinAmount: insulinAmount,
+                            insulinType: "HealthKit",
+                            nightScoutId: healthKitUUID,
+                            sourceInfo: sample.sourceRevision.source.name
+                        )
+                        // Apply initial decay
+                        insulinCache.updateDecayedAmount()
+                        modelContext.insert(insulinCache)
+                        insulinCount += 1
+                        print("💉 Cached insulin: \(String(format: "%.2f", insulinAmount)) U at \(sample.startDate.formatted())")
+                    }
+                }
+                
+            } catch {
+                print("⚠️ Failed to cache HealthKit insulin: \(error.localizedDescription)")
+            }
+            
+            // Cache HealthKit carbohydrate data to SwiftData
+            print("🍞 Caching HealthKit carb data to SwiftData...")
+            
+            do {
+                // Fetch carbs from HealthKit (last 5 hours)
+                let carbType = HKQuantityType.quantityType(forIdentifier: .dietaryCarbohydrates)!
+                let fiveHoursAgo = Date().addingTimeInterval(-5 * 3600)
+                let carbPredicate = HKQuery.predicateForSamples(withStart: fiveHoursAgo, end: Date(), options: .strictStartDate)
+                
+                let carbSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+                    let query = HKSampleQuery(sampleType: carbType, predicate: carbPredicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+                        if let error = error {
+                            continuation.resume(throwing: error)
+                        } else {
+                            continuation.resume(returning: samples as? [HKQuantitySample] ?? [])
+                        }
+                    }
+                    healthStore.execute(query)
+                }
+                
+                // Cache carb samples to SwiftData
+                for sample in carbSamples {
+                    let carbAmount = sample.quantity.doubleValue(for: HKUnit.gram())
+                    let healthKitUUID = sample.uuid.uuidString
+                    
+                    // Check for existing carb entry by HealthKit UUID
+                    let fetchDescriptor = FetchDescriptor<NightScoutCarbCache>(
+                        predicate: #Predicate<NightScoutCarbCache> { cache in
+                            cache.nightScoutId == healthKitUUID
+                        }
+                    )
+                    
+                    let existingCarbs = try modelContext.fetch(fetchDescriptor)
+                    if existingCarbs.isEmpty {
+                        let carbCache = NightScoutCarbCache(
+                            timestamp: sample.startDate,
+                            carbAmount: carbAmount,
+                            carbType: "HealthKit",
+                            nightScoutId: healthKitUUID,
+                            sourceInfo: sample.sourceRevision.source.name
+                        )
+                        // Apply initial decay
+                        carbCache.updateDecayedAmount()
+                        modelContext.insert(carbCache)
+                        carbsCount += 1
+                        print("🍞 Cached carbs: \(String(format: "%.1f", carbAmount)) g at \(sample.startDate.formatted())")
+                    }
+                }
+                
+            } catch {
+                print("⚠️ Failed to cache HealthKit carbs: \(error.localizedDescription)")
+            }
+            
+            // Save all changes
+            try modelContext.save()
+            print("✅ HealthKit sync completed - Insulin: \(insulinCount), Carbs: \(carbsCount)")
+            
+        } catch {
+            print("❌ HealthKit sync failed: \(error.localizedDescription)")
+        }
+        
+        return (insulinCount, carbsCount)
+    }
+    
+    // MARK: - NightScout API Integration
+    /// Fetch fresh data directly from NightScout API and cache to SwiftData
+    /// This provides a robust, HealthKit-independent data source for predictions
+    private func performComprehensiveNightScoutSync() async -> (glucose: Int, insulin: Int, carbs: Int) {
+        print("🔍 === COMPREHENSIVE NIGHTSCOUT SYNC METHOD CALLED ===")
+        
+        guard let modelContainer = await BackgroundGPUWaveNetService.shared.getModelContainer() else {
+            print("❌ Model container not available for comprehensive sync")
+            return (0, 0, 0)
+        }
+        
+        let modelContext = ModelContext(modelContainer)
+        var glucoseCount = 0
+        var insulinCount = 0
+        var carbsCount = 0
+        
+        do {
+            // Create NightScout service instance
+            // Read Nightscout settings using the same keys persisted from the main app SettingsView
+            // Fallback to legacy snake_case keys for backward-compatibility
+            let baseURLString = UserDefaults.standard.string(forKey: "nightscoutBaseURL") ??
+                                UserDefaults.standard.string(forKey: "nightscout_base_url") ?? ""
+            let apiSecret = UserDefaults.standard.string(forKey: "apiSecret") ??
+                            UserDefaults.standard.string(forKey: "nightscout_api_secret") ?? ""
+            let apiToken  = UserDefaults.standard.string(forKey: "apiToken") ??
+                            UserDefaults.standard.string(forKey: "nightscout_api_token") ?? ""
+            
+            guard let baseURL = URL(string: baseURLString), !baseURLString.isEmpty else {
+                print("❌ NightScout base URL not configured - skipping glucose sync")
+                return (0, 0, 0)
+            }
+            
+            let nightScoutService = NightscoutService(baseURL: baseURL, apiSecret: apiSecret, apiToken: apiToken)
+            
+            // 1. Fetch glucose data (24 hours)
+            print("📥 Fetching 24 hours of glucose data from NightScout API...")
+            let glucoseEntries = try await nightScoutService.fetchGlucoseData(minutes: 1440)
+            print("✅ Fetched \(glucoseEntries.count) glucose entries from API")
+            
+            // Cache glucose entries (existing logic)
+            for entry in glucoseEntries {
+                guard isValidGlucoseValue(mgdl: entry.sgv) else { continue }
+                let startTime = entry.date.addingTimeInterval(-60) // 1 minute window
+                let endTime = entry.date.addingTimeInterval(60)
+                
+                let fetchDescriptor = FetchDescriptor<HealthKitBGCache>(
+                    predicate: #Predicate<HealthKitBGCache> { cache in
+                        cache.timestamp >= startTime && cache.timestamp <= endTime
+                    }
+                )
+                
+                let existingEntries = try modelContext.fetch(fetchDescriptor)
+                if existingEntries.isEmpty {
+                    let cacheEntry = HealthKitBGCache(
+                        timestamp: entry.date,
+                        bloodGlucose_mmol: entry.sgv / 18.0,
+                        healthKitUUID: "nightscout_\(entry.date.timeIntervalSince1970)",
+                        sourceInfo: "NightScout API"
+                    )
+                    modelContext.insert(cacheEntry)
+                    glucoseCount += 1
+                }
+            }
+            
+            // 2. Cache HealthKit insulin data to SwiftData (app must be foregrounded)
+            print("💉 Caching HealthKit insulin data to SwiftData...")
+            let healthKitProvider = HealthKitFeatureProvider()
+            
+            do {
+                // Fetch insulin from HealthKit (last 4 hours)
+                let insulinType = HKQuantityType.quantityType(forIdentifier: .insulinDelivery)!
+                let fourHoursAgo = Date().addingTimeInterval(-4 * 3600)
+                let predicate = HKQuery.predicateForSamples(withStart: fourHoursAgo, end: Date(), options: .strictStartDate)
+                
+                let insulinSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+                    let query = HKSampleQuery(sampleType: insulinType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+                        if let error = error {
+                            continuation.resume(throwing: error)
+                        } else {
+                            continuation.resume(returning: samples as? [HKQuantitySample] ?? [])
+                        }
+                    }
+                    healthStore.execute(query)
+                }
+                
+                // Cache insulin samples to SwiftData
+                for sample in insulinSamples {
+                    let insulinAmount = sample.quantity.doubleValue(for: HKUnit.internationalUnit())
+                    let healthKitUUID = sample.uuid.uuidString
+                    
+                    // Check for existing insulin entry by HealthKit UUID
+                    let fetchDescriptor = FetchDescriptor<NightScoutInsulinCache>(
+                        predicate: #Predicate<NightScoutInsulinCache> { cache in
+                            cache.nightScoutId == healthKitUUID
+                        }
+                    )
+                    
+                    let existingInsulin = try modelContext.fetch(fetchDescriptor)
+                    if existingInsulin.isEmpty {
+                        let insulinCache = NightScoutInsulinCache(
+                            timestamp: sample.startDate,
+                            insulinAmount: insulinAmount,
+                            insulinType: "HealthKit",
+                            nightScoutId: healthKitUUID, // Use HealthKit UUID as ID
+                            sourceInfo: sample.sourceRevision.source.name
+                        )
+                        // Apply initial decay
+                        insulinCache.updateDecayedAmount()
+                        modelContext.insert(insulinCache)
+                        insulinCount += 1
+                        print("💉 Cached insulin: \(String(format: "%.2f", insulinAmount)) U at \(sample.startDate.formatted())")
+                    }
+                }
+                
+            } catch {
+                print("⚠️ Failed to cache HealthKit insulin: \(error.localizedDescription)")
+            }
+            
+            // 3. Cache HealthKit carbohydrate data to SwiftData
+            print("🍞 Caching HealthKit carb data to SwiftData...")
+            
+            do {
+                // Fetch carbs from HealthKit (last 5 hours)
+                let carbType = HKQuantityType.quantityType(forIdentifier: .dietaryCarbohydrates)!
+                let fiveHoursAgo = Date().addingTimeInterval(-5 * 3600)
+                let carbPredicate = HKQuery.predicateForSamples(withStart: fiveHoursAgo, end: Date(), options: .strictStartDate)
+                
+                let carbSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+                    let query = HKSampleQuery(sampleType: carbType, predicate: carbPredicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+                        if let error = error {
+                            continuation.resume(throwing: error)
+                        } else {
+                            continuation.resume(returning: samples as? [HKQuantitySample] ?? [])
+                        }
+                    }
+                    healthStore.execute(query)
+                }
+                
+                // Cache carb samples to SwiftData
+                for sample in carbSamples {
+                    let carbAmount = sample.quantity.doubleValue(for: HKUnit.gram())
+                    let healthKitUUID = sample.uuid.uuidString
+                    
+                    // Check for existing carb entry by HealthKit UUID
+                    let fetchDescriptor = FetchDescriptor<NightScoutCarbCache>(
+                        predicate: #Predicate<NightScoutCarbCache> { cache in
+                            cache.nightScoutId == healthKitUUID
+                        }
+                    )
+                    
+                    let existingCarbs = try modelContext.fetch(fetchDescriptor)
+                    if existingCarbs.isEmpty {
+                        let carbCache = NightScoutCarbCache(
+                            timestamp: sample.startDate,
+                            carbAmount: carbAmount,
+                            carbType: "HealthKit",
+                            nightScoutId: healthKitUUID, // Use HealthKit UUID as ID
+                            sourceInfo: sample.sourceRevision.source.name
+                        )
+                        // Apply initial decay
+                        carbCache.updateDecayedAmount()
+                        modelContext.insert(carbCache)
+                        carbsCount += 1
+                        print("🍞 Cached carbs: \(String(format: "%.1f", carbAmount)) g at \(sample.startDate.formatted())")
+                    }
+                }
+                
+            } catch {
+                print("⚠️ Failed to cache HealthKit carbs: \(error.localizedDescription)")
+            }
+            
+            // Save all changes
+            try modelContext.save()
+            print("✅ Comprehensive sync completed - Glucose: \(glucoseCount), Insulin: \(insulinCount), Carbs: \(carbsCount)")
+            
+        } catch {
+            print("❌ Comprehensive sync failed: \(error.localizedDescription)")
+        }
+        
+        return (glucoseCount, insulinCount, carbsCount)
+    }
+    
+    private func performNightScoutToSwiftDataSync() async -> Int {
+        print("🔍 === NIGHTSCOUT API SYNC METHOD CALLED ===")
+        print("🌙 === STARTING NIGHTSCOUT API SYNC DEBUG ===")
+        
+        do {
+            print("🔍 Checking model container availability...")
+            guard let modelContainer = await BackgroundGPUWaveNetService.shared.getModelContainer() else {
+                print("❌ Model container not available for NightScout sync")
+                print("🔍 This is likely the cause of missing NightScout API sync!")
+                return 0
+            }
+            print("✅ Model container obtained successfully")
+            let modelContext = ModelContext(modelContainer)
+            
+            // Get NightScout API configuration with detailed logging
+            let defs = UserDefaults.standard
+            let baseURLString = defs.string(forKey: "nightscoutBaseURL") ?? ""
+            let apiSecret = defs.string(forKey: "apiSecret") ?? ""
+            let apiToken = defs.string(forKey: "apiToken") ?? ""
+            
+            print("🔍 NightScout Configuration:")
+            print("   Base URL: \(baseURLString.isEmpty ? "MISSING" : "✅ Set")")
+            print("   API Secret: \(apiSecret.isEmpty ? "MISSING" : "✅ Set")")
+            print("   API Token: \(apiToken.isEmpty ? "MISSING" : "✅ Set")")
+            
+            guard let baseURL = URL(string: baseURLString), !baseURLString.isEmpty else {
+                print("❌ NightScout base URL not configured - skipping API sync")
+                return 0
+            }
+            
+            let nightScoutService = NightscoutService(baseURL: baseURL, apiSecret: apiSecret, apiToken: apiToken)
+            print("✅ NightScout service initialized")
+            
+            // Check app state and network availability
+            await Task { @MainActor in
+                let appState = UIApplication.shared.applicationState
+                print("📱 Current app state: \(appState.rawValue) (0=active, 1=inactive, 2=background)")
+            }.value
+            
+            print("📥 Fetching 24 hours of glucose data from NightScout API...")
+            print("🕐 Current time: \(Date())")
+            print("💡 ML models require 24×8 input window (120 minutes), fetching 24h for sufficient context")
+            
+            let startTime = Date()
+            let entries = try await nightScoutService.fetchGlucoseData(minutes: 1440) // 24 hours = 1440 minutes
+            let fetchDuration = Date().timeIntervalSince(startTime)
+            
+            print("⏱️ API fetch completed in \(String(format: "%.2f", fetchDuration))s")
+            
+            guard !entries.isEmpty else {
+                print("❌ No fresh glucose data available from NightScout API")
+                print("🔍 This could indicate:")
+                print("   - Network connectivity issues in background")
+                print("   - API authentication problems")
+                print("   - No recent data on NightScout server")
+                return 0
+            }
+            
+            print("📊 Fetched \(entries.count) entries from NightScout API")
+            if let firstEntry = entries.first, let lastEntry = entries.last {
+                let formatter = DateFormatter()
+                formatter.timeStyle = .short
+                print("🕒 Earliest: \(formatter.string(from: firstEntry.date)) - \(Int(firstEntry.sgv)) mg/dL")
+                print("🕒 Latest: \(formatter.string(from: lastEntry.date)) - \(Int(lastEntry.sgv)) mg/dL")
+            }
+            
+            // Cache entries directly to SwiftData
+            print("💾 Caching entries to SwiftData...")
+            var savedCount = 0
+            var skippedCount = 0
+            
+            for entry in entries {
+                // Validate glucose value to prevent corrupted data
+                guard isValidGlucoseValue(mgdl: entry.sgv) else {
+                    print("⚠️ Skipping invalid glucose value: \(entry.sgv) mg/dL")
+                    continue
+                }
+                
+                // Check if entry already exists in cache (with timestamp tolerance)
+                let timeWindow: TimeInterval = 30 // 30 seconds tolerance
+                let startTime = entry.date.addingTimeInterval(-timeWindow)
+                let endTime = entry.date.addingTimeInterval(timeWindow)
+                
+                let fetchDescriptor = FetchDescriptor<HealthKitBGCache>(
+                    predicate: #Predicate<HealthKitBGCache> { cache in
+                        cache.timestamp >= startTime && cache.timestamp <= endTime
+                    }
+                )
+                
+                do {
+                    let existingEntries = try modelContext.fetch(fetchDescriptor)
+                    
+                    if existingEntries.isEmpty {
+                        // Create new cache entry from NightScout data
+                        let mmolValue = entry.sgv / 18.0
+                        let cacheEntry = HealthKitBGCache(
+                            timestamp: entry.date,
+                            bloodGlucose_mmol: mmolValue,
+                            healthKitUUID: "NS-Watch-\(UUID().uuidString)",
+                            sourceInfo: "NightScout API (Watch-triggered)"
+                        )
+                        
+                        modelContext.insert(cacheEntry)
+                        savedCount += 1
+                        print("✅ Cached: \(String(format: "%.1f", mmolValue)) mmol/L at \(entry.date)")
+                    } else {
+                        skippedCount += 1
+                        print("⏭️ Skipped duplicate within \(Int(timeWindow))s: \(String(format: "%.1f", entry.sgv)) mg/dL")
+                    }
+                } catch {
+                    print("⚠️ Error checking/saving entry: \(error)")
+                }
+            }
+            
+            // Save all changes
+            try modelContext.save()
+            
+            print("✅ NightScout API sync complete: \(savedCount) new, \(skippedCount) existing")
+            return savedCount
+            
+        } catch {
+            print("❌ === NIGHTSCOUT API SYNC FAILED ===")
+            print("❌ Error: \(error.localizedDescription)")
+            print("❌ Full error: \(error)")
+            
+            // Specific error analysis
+            if let urlError = error as? URLError {
+                print("🌐 Network Error Code: \(urlError.code.rawValue)")
+                switch urlError.code {
+                case .notConnectedToInternet:
+                    print("🔍 Cause: Device not connected to internet")
+                case .networkConnectionLost:
+                    print("🔍 Cause: Network connection lost during request")
+                case .timedOut:
+                    print("🔍 Cause: Request timed out (common in background)")
+                case .cannotConnectToHost:
+                    print("🔍 Cause: Cannot connect to NightScout server")
+                default:
+                    print("🔍 Cause: Other network error - \(urlError.localizedDescription)")
+                }
+            }
+            
+            return 0
+        }
+    }
+    
+    /// Validates glucose values to prevent corrupted data
+    private func isValidGlucoseValue(mgdl: Double) -> Bool {
+        // Valid glucose range: 20-600 mg/dL (1.1-33.3 mmol/L)
+        // Most CGM readings are between 40-400 mg/dL (2.2-22.2 mmol/L)
+        let minValue: Double = 20
+        let maxValue: Double = 600
+        
+        guard mgdl >= minValue && mgdl <= maxValue else {
+            print("❌ Glucose value out of range: \(mgdl) mg/dL (valid: \(minValue)-\(maxValue) mg/dL)")
+            return false
+        }
+        
+        guard !mgdl.isNaN && !mgdl.isInfinite else {
+            print("❌ Invalid glucose value: NaN or Infinite")
+            return false
+        }
+        
+        return true
     }
     
     // MARK: - Background Task Management

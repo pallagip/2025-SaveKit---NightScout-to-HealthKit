@@ -503,7 +503,7 @@ class MedicalBackgroundManager: ObservableObject {
     
     private func getModelContainer() -> ModelContainer? {
         do {
-            return try ModelContainer(for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self)
+            return try ModelContainer(for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self, NightScoutInsulinCache.self, NightScoutCarbCache.self)
         } catch {
             print("❌ Failed to create ModelContainer: \(error)")
             return nil

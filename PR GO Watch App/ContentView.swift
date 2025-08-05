@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var lastGPUTime: String = "—"
     @State private var processingTimer: Timer? = nil
     @StateObject private var watchManager = WatchConnectivityManager.shared
+    @StateObject private var healthKitManager = HealthKitManager.shared
     
     var body: some View {
         NavigationView {
@@ -43,6 +44,25 @@ struct ContentView: View {
                     }
                     .padding()
                     .background(Color.orange.opacity(0.1))
+                    .cornerRadius(10)
+                    
+                    // Heart Rate Display
+                    VStack(spacing: 8) {
+                        Text("❤️ Heart Rate")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                        
+                        Text(healthKitManager.isAuthorized ? "\(Int(healthKitManager.heartRate)) BPM" : "No Auth")
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.red)
+                        
+                        Text("Latest")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding()
+                    .background(Color.red.opacity(0.1))
                     .cornerRadius(10)
                     
                     // GPU Prediction Trigger Button
@@ -88,6 +108,7 @@ struct ContentView: View {
             checkConnectivity()
             setupWatchConnectivity()
             requestNotificationPermissions()
+            healthKitManager.requestAuthorization()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenWatchAppFromNotification"))) { _ in
             // This handles deep linking from notification taps
@@ -242,8 +263,11 @@ struct ContentView: View {
         let message = [
             "type": "trigger_gpu_prediction",
             "timestamp": Date().timeIntervalSince1970,
-            "source": "watch_button"
+            "source": "watch_button",
+            "heart_rate": healthKitManager.heartRate // Include latest heart rate
         ] as [String: Any]
+        
+        print("❤️ Sending heart rate to iPhone: \(healthKitManager.heartRate)")
         
         if WCSession.default.isReachable {
             WCSession.default.sendMessage(message, replyHandler: { response in

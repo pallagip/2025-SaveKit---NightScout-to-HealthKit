@@ -663,15 +663,16 @@ final class HealthKitFeatureProvider: ObservableObject {
             }
             
             // Convert to array of tuples with date and value in mg/dL
+            // Keep reverse chronological order (newest first) so .first = latest reading
             let glucoseData = cachedEntries.map { cache in
                 (date: cache.timestamp, value: Double(cache.bloodGlucose_mgdl))
-            }.reversed() // Reverse to get chronological order
+            }
             
             print("✅ Found \(glucoseData.count) cached glucose readings")
-            if let latest = glucoseData.last {
+            if let latest = glucoseData.first {
                 print("📈 Latest: \(Int(latest.value)) mg/dL at \(latest.date)")
             }
-            if let oldest = glucoseData.first {
+            if let oldest = glucoseData.last {
                 print("📉 Oldest: \(Int(oldest.value)) mg/dL at \(oldest.date)")
             }
             
