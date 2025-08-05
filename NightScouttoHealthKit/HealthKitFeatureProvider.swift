@@ -642,7 +642,7 @@ final class HealthKitFeatureProvider: ObservableObject {
         print("📊 Fetching glucose data from SwiftData cache...")
         
         let now = Date()
-        let startDate = now.addingTimeInterval(-24 * 3600) // Last 24 hours
+        let startDate = now.addingTimeInterval(-2 * 3600) // Last 2 hours
         
         let fetchDescriptor = FetchDescriptor<HealthKitBGCache>(
             predicate: #Predicate<HealthKitBGCache> { cache in
@@ -690,7 +690,7 @@ final class HealthKitFeatureProvider: ObservableObject {
         print("🔨 Building input window from SwiftData cache...")
         
         // Fetch glucose data from cache
-        let glucoseData = try await fetchGlucoseFromSwiftDataCache(modelContext: modelContext, limit: 100)
+        let glucoseData = try await fetchGlucoseFromSwiftDataCache(modelContext: modelContext, limit: 24)
         
         guard !glucoseData.isEmpty else {
             throw NSError(domain: "SwiftData", code: 2, userInfo: [NSLocalizedDescriptionKey: "No glucose data in cache"])
@@ -733,14 +733,17 @@ final class HealthKitFeatureProvider: ObservableObject {
             carbValues.append(0.0)       // Will calculate COB separately
         }
         
-        // Calculate current IOB and COB (these might still come from HealthKit if available)
-        let iob = try? await Self.calculateActiveInsulinFromHealthKit(store: store, now: now)
-        let cob = try? await Self.calculateActiveCarbsFromHealthKit(store: store, now: now)
+        // Calculate current IOB and COB using NightScout SwiftData caches first
+        let (iobCache, cobCache) = Self.calculateActiveIOBandCOBFromCaches(modelContext: modelContext, now: now)
+        
+        // Fallback to HealthKit only if caches are empty (e.g., first run or no recent data)
+        let iob = iobCache > 0.0 ? iobCache : (try? await Self.calculateActiveInsulinFromHealthKit(store: store, now: now)) ?? 0.0
+        let cob = cobCache > 0.0 ? cobCache : (try? await Self.calculateActiveCarbsFromHealthKit(store: store, now: now)) ?? 0.0
         
         print("📊 Cache-based features:")
         print("   Glucose range: \(glucoseValues.min() ?? 0)-\(glucoseValues.max() ?? 0) mg/dL")
-        print("   IOB: \(String(format: "%.2f", iob ?? 0.0)) U")
-        print("   COB: \(String(format: "%.1f", cob ?? 0.0)) g")
+        print("   IOB (cache/HealthKit): \(String(format: "%.2f", iob)) U")
+        print("   COB (cache/HealthKit): \(String(format: "%.1f", cob)) g")
         
         // Build MLMultiArray [1, 24, 8] for WaveNet models
         let array = try MLMultiArray(shape: [1, 24, 8], dataType: .double)
@@ -755,10 +758,10 @@ final class HealthKitFeatureProvider: ObservableObject {
             array[baseIndex + 1] = NSNumber(value: heartRateValues[i])
             
             // Feature 2: Active insulin (IOB)
-            array[baseIndex + 2] = NSNumber(value: iob ?? 0.0)
+            array[baseIndex + 2] = NSNumber(value: iob)
             
             // Feature 3: Active carbs (COB)
-            array[baseIndex + 3] = NSNumber(value: cob ?? 0.0)
+            array[baseIndex + 3] = NSNumber(value: cob)
             
             // Feature 4: Time of day (0-23)
             let hour = Calendar.current.component(.hour, from: recentBins[i])
@@ -777,5 +780,46 @@ final class HealthKitFeatureProvider: ObservableObject {
         
         print("✅ Built input window from SwiftData cache")
         return array
+    }
+    
+    // MARK: - SwiftData Cache Helpers
+    /// Calculate the total active insulin and carbs using NightScout SwiftData caches.
+    /// - Parameters:
+    ///   - modelContext: SwiftData model context.
+    ///   - now: The reference time for activity calculations.
+    /// - Returns: Tuple of (activeInsulin, activeCarbs)
+    static func calculateActiveIOBandCOBFromCaches(modelContext: ModelContext, now: Date = Date()) -> (Double, Double) {
+        var activeInsulin: Double = 0.0
+        var activeCarbs: Double = 0.0
+        
+        // Calculate cutoff dates outside predicates to avoid SwiftData limitations
+        let insulinCutoff = now.addingTimeInterval(-4 * 3600) // 4 hours ago
+        let carbCutoff = now.addingTimeInterval(-5 * 3600) // 5 hours ago
+        
+        // Fetch insulin cache entries within 4 hours (active window)
+        let insulinFetch = FetchDescriptor<NightScoutInsulinCache>(
+            predicate: #Predicate<NightScoutInsulinCache> { cache in
+                cache.timestamp >= insulinCutoff
+            }
+        )
+        if let insulinCaches = try? modelContext.fetch(insulinFetch) {
+            for cache in insulinCaches {
+                activeInsulin += cache.getDecayedAmount(currentTime: now)
+            }
+        }
+        
+        // Fetch carb cache entries within 5 hours (active window)
+        let carbFetch = FetchDescriptor<NightScoutCarbCache>(
+            predicate: #Predicate<NightScoutCarbCache> { cache in
+                cache.timestamp >= carbCutoff
+            }
+        )
+        if let carbCaches = try? modelContext.fetch(carbFetch) {
+            for cache in carbCaches {
+                activeCarbs += cache.getDecayedAmount(currentTime: now)
+            }
+        }
+        
+        return (activeInsulin, activeCarbs)
     }
 }

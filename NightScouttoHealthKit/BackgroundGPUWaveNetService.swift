@@ -196,8 +196,8 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
             // Calculate prediction count
             let predictionCount = calculateNextPredictionCount(context: context)
             
-            // Run all WaveNet models in series using GPU acceleration
-            let predictions = await runSeriesGPUWaveNetPredictions(
+            // Run all WaveNet models in parallel using GPU acceleration
+            let predictions = await runParallelGPUWaveNetPredictions(
                 window: inputTensor,
                 currentBG: currentBG,
                 usedMgdl: true,
@@ -285,8 +285,8 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - Series GPU WaveNet Prediction
-    private func runSeriesGPUWaveNetPredictions(
+    // MARK: - Parallel GPU WaveNet Prediction
+    private func runParallelGPUWaveNetPredictions(
         window: MLMultiArray,
         currentBG: Double,
         usedMgdl: Bool,
@@ -295,12 +295,10 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
         heartRate: Double
     ) async -> [Int: Prediction] {
         
-        print("🔥 === RUNNING SERIES GPU WAVENET PREDICTIONS ===")
+        print("🚀 === RUNNING PARALLEL GPU WAVENET PREDICTIONS ===")
         
-        var modelPredictions: [Int: Prediction] = [:]
-        
-        // Helper function to copy MLMultiArray for each model
-        func copyMLMultiArray(_ original: MLMultiArray) -> MLMultiArray {
+        // Helper function to copy MLMultiArray - nonisolated to work in parallel tasks
+        nonisolated func copyMLMultiArray(_ original: MLMultiArray) -> MLMultiArray {
             guard let copy = try? MLMultiArray(shape: original.shape, dataType: original.dataType) else {
                 fatalError("Failed to create MLMultiArray copy")
             }
@@ -315,75 +313,119 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
             return copy
         }
         
-        // Run each WaveNet model independently with individual error handling
-        // This ensures all 5 models attempt to run even if one fails
-        
-        // WaveNet 1 - GPU Accelerated
-        do {
-            print("🔥 Running WaveNet1 on GPU...")
-            let windowCopy1 = copyMLMultiArray(window)
-            var prediction1 = try gpuWaveNet1.predict(window: windowCopy1, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
-            // prediction1.predictionValue is already absolute (no delta addition needed)
-            prediction1.heartRate = heartRate
-            modelPredictions[1] = prediction1
-            print("✅ GPU WaveNet1: \(String(format: "%.2f", prediction1.modelOutput)) mmol/L = \(String(format: "%.1f", prediction1.modelOutput * 18.0)) mg/dL")
-        } catch {
-            print("❌ GPU WaveNet1 failed: \(error.localizedDescription)")
+        // Run all 5 WaveNet models concurrently using TaskGroup for better actor isolation
+        let results = await withTaskGroup(of: (Int, Prediction?).self) { group in
+            
+            // WaveNet 1
+            group.addTask {
+                do {
+                    await MainActor.run { print("🚀 Starting WaveNet1 on GPU...") }
+                    let windowCopy1 = copyMLMultiArray(window)
+                    let service1 = await MainActor.run { self.gpuWaveNet1 }
+                    var prediction1 = try service1.predict(window: windowCopy1, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+                    prediction1.heartRate = heartRate
+                    await MainActor.run { 
+                        print("✅ GPU WaveNet1: \(String(format: "%.2f", prediction1.modelOutput)) mmol/L = \(String(format: "%.1f", prediction1.modelOutput * 18.0)) mg/dL") 
+                    }
+                    return (1, prediction1)
+                } catch {
+                    await MainActor.run { print("❌ GPU WaveNet1 failed: \(error.localizedDescription)") }
+                    return (1, nil)
+                }
+            }
+            
+            // WaveNet 2
+            group.addTask {
+                do {
+                    await MainActor.run { print("🚀 Starting WaveNet2 on GPU...") }
+                    let windowCopy2 = copyMLMultiArray(window)
+                    let service2 = await MainActor.run { self.gpuWaveNet2 }
+                    var prediction2 = try service2.predict(window: windowCopy2, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+                    prediction2.heartRate = heartRate
+                    await MainActor.run { 
+                        print("✅ GPU WaveNet2: \(String(format: "%.2f", prediction2.modelOutput)) mmol/L = \(String(format: "%.1f", prediction2.modelOutput * 18.0)) mg/dL") 
+                    }
+                    return (2, prediction2)
+                } catch {
+                    await MainActor.run { print("❌ GPU WaveNet2 failed: \(error.localizedDescription)") }
+                    return (2, nil)
+                }
+            }
+            
+            // WaveNet 3
+            group.addTask {
+                do {
+                    await MainActor.run { print("🚀 Starting WaveNet3 on GPU...") }
+                    let windowCopy3 = copyMLMultiArray(window)
+                    let service3 = await MainActor.run { self.gpuWaveNet3 }
+                    var prediction3 = try service3.predict(window: windowCopy3, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+                    prediction3.heartRate = heartRate
+                    await MainActor.run { 
+                        print("✅ GPU WaveNet3: \(String(format: "%.2f", prediction3.modelOutput)) mmol/L = \(String(format: "%.1f", prediction3.modelOutput * 18.0)) mg/dL") 
+                    }
+                    return (3, prediction3)
+                } catch {
+                    await MainActor.run { print("❌ GPU WaveNet3 failed: \(error.localizedDescription)") }
+                    return (3, nil)
+                }
+            }
+            
+            // WaveNet 4
+            group.addTask {
+                do {
+                    await MainActor.run { print("🚀 Starting WaveNet4 on GPU...") }
+                    let windowCopy4 = copyMLMultiArray(window)
+                    let service4 = await MainActor.run { self.gpuWaveNet4 }
+                    var prediction4 = try service4.predict(window: windowCopy4, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+                    prediction4.heartRate = heartRate
+                    await MainActor.run { 
+                        print("✅ GPU WaveNet4: \(String(format: "%.2f", prediction4.modelOutput)) mmol/L = \(String(format: "%.1f", prediction4.modelOutput * 18.0)) mg/dL") 
+                    }
+                    return (4, prediction4)
+                } catch {
+                    await MainActor.run { print("❌ GPU WaveNet4 failed: \(error.localizedDescription)") }
+                    return (4, nil)
+                }
+            }
+            
+            // WaveNet 5
+            group.addTask {
+                do {
+                    await MainActor.run { print("🚀 Starting WaveNet5 on GPU...") }
+                    let windowCopy5 = copyMLMultiArray(window)
+                    let service5 = await MainActor.run { self.gpuWaveNet5 }
+                    var prediction5 = try service5.predict(window: windowCopy5, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
+                    prediction5.heartRate = heartRate
+                    await MainActor.run { 
+                        print("✅ GPU WaveNet5: \(String(format: "%.2f", prediction5.modelOutput)) mmol/L = \(String(format: "%.1f", prediction5.modelOutput * 18.0)) mg/dL") 
+                    }
+                    return (5, prediction5)
+                } catch {
+                    await MainActor.run { print("❌ GPU WaveNet5 failed: \(error.localizedDescription)") }
+                    return (5, nil)
+                }
+            }
+            
+            // Collect all results
+            var allResults: [(Int, Prediction?)] = []
+            for await result in group {
+                allResults.append(result)
+            }
+            return allResults
         }
         
-        // WaveNet 2 - GPU Accelerated
-        do {
-            print("🔥 Running WaveNet2 on GPU...")
-            let windowCopy2 = copyMLMultiArray(window)
-            var prediction2 = try gpuWaveNet2.predict(window: windowCopy2, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
-            // prediction2.predictionValue is already absolute (no delta addition needed)
-            prediction2.heartRate = heartRate
-            modelPredictions[2] = prediction2
-            print("✅ GPU WaveNet2: \(String(format: "%.2f", prediction2.modelOutput)) mmol/L = \(String(format: "%.1f", prediction2.modelOutput * 18.0)) mg/dL")
-        } catch {
-            print("❌ GPU WaveNet2 failed: \(error.localizedDescription)")
+        // Collect successful predictions
+        var modelPredictions: [Int: Prediction] = [:]
+        var successCount = 0
+        
+        for (modelIndex, prediction) in results {
+            if let prediction = prediction {
+                modelPredictions[modelIndex] = prediction
+                successCount += 1
+            }
         }
         
-        // WaveNet 3 - GPU Accelerated
-        do {
-            print("🔥 Running WaveNet3 on GPU...")
-            let windowCopy3 = copyMLMultiArray(window)
-            var prediction3 = try gpuWaveNet3.predict(window: windowCopy3, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
-            // prediction3.predictionValue is already absolute (no delta addition needed)
-            prediction3.heartRate = heartRate
-            modelPredictions[3] = prediction3
-            print("✅ GPU WaveNet3: \(String(format: "%.2f", prediction3.modelOutput)) mmol/L = \(String(format: "%.1f", prediction3.modelOutput * 18.0)) mg/dL")
-        } catch {
-            print("❌ GPU WaveNet3 failed: \(error.localizedDescription)")
-        }
-        
-        // WaveNet 4 - GPU Accelerated
-        do {
-            print("🔥 Running WaveNet4 on GPU...")
-            let windowCopy4 = copyMLMultiArray(window)
-            var prediction4 = try gpuWaveNet4.predict(window: windowCopy4, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
-            // prediction4.predictionValue is already absolute (no delta addition needed)
-            prediction4.heartRate = heartRate
-            modelPredictions[4] = prediction4
-            print("✅ GPU WaveNet4: \(String(format: "%.2f", prediction4.modelOutput)) mmol/L = \(String(format: "%.1f", prediction4.modelOutput * 18.0)) mg/dL")
-        } catch {
-            print("❌ GPU WaveNet4 failed: \(error.localizedDescription)")
-        }
-        
-        // WaveNet 5 - GPU Accelerated
-        do {
-            print("🔥 Running WaveNet5 on GPU...")
-            let windowCopy5 = copyMLMultiArray(window)
-            var prediction5 = try gpuWaveNet5.predict(window: windowCopy5, currentBG: currentBG, usedMgdl: usedMgdl, predictionCount: predictionCount)
-            // prediction5.predictionValue is already absolute (no delta addition needed)
-            prediction5.heartRate = heartRate
-            modelPredictions[5] = prediction5
-            print("✅ GPU WaveNet5: \(String(format: "%.2f", prediction5.modelOutput)) mmol/L = \(String(format: "%.1f", prediction5.modelOutput * 18.0)) mg/dL")
-        } catch {
-            print("❌ GPU WaveNet5 failed: \(error.localizedDescription)")
-        }
-        
-        print("🔥 === GPU WAVENET SERIES COMPLETE: \(modelPredictions.count) models ===")
+        print("🚀 === PARALLEL GPU WAVENET COMPLETE: \(successCount)/5 models succeeded ===")
         return modelPredictions
     }
     

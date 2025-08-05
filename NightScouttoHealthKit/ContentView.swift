@@ -168,6 +168,14 @@ struct BGPredictionView: View {
                     .buttonStyle(.bordered)
                     .foregroundColor(.orange)
                     .disabled(gpuService.isProcessing)
+                    
+                    Button("🧪 Test Cache") {
+                        Task {
+                            await addTestCacheData()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .foregroundColor(.blue)
                 }
             }
             .padding()
@@ -564,6 +572,101 @@ struct BGPredictionView: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+    
+    // MARK: - Test Cache Data Method
+    /// Adds test insulin and carb data to SwiftData caches for testing fallback functionality
+    private func addTestCacheData() async {
+        let now = Date()
+        
+        // Add test insulin data (recent doses to simulate active IOB)
+        let testInsulinDoses = [
+            (timestamp: now.addingTimeInterval(-30 * 60), amount: 5.0, type: "Test Bolus 1"), // 30 min ago
+            (timestamp: now.addingTimeInterval(-90 * 60), amount: 3.5, type: "Test Bolus 2"), // 1.5 hours ago
+            (timestamp: now.addingTimeInterval(-150 * 60), amount: 2.0, type: "Test Bolus 3") // 2.5 hours ago
+        ]
+        
+        // Add test carb data (recent intake to simulate active COB)
+        let testCarbIntakes = [
+            (timestamp: now.addingTimeInterval(-45 * 60), amount: 25.0, type: "Test Meal 1"), // 45 min ago
+            (timestamp: now.addingTimeInterval(-120 * 60), amount: 15.0, type: "Test Snack 1"), // 2 hours ago
+            (timestamp: now.addingTimeInterval(-180 * 60), amount: 40.0, type: "Test Meal 2") // 3 hours ago
+        ]
+        
+        var insulinCount = 0
+        var carbCount = 0
+        
+        // Insert test insulin data
+        for (timestamp, amount, type) in testInsulinDoses {
+            let testUUID = "test-insulin-\(UUID().uuidString)"
+            
+            // Check if similar test data already exists to avoid duplicates
+            // Calculate time range outside predicate to avoid unsupported function calls
+            let timeStart = timestamp.addingTimeInterval(-60)
+            let timeEnd = timestamp.addingTimeInterval(60)
+            let fetchDescriptor = FetchDescriptor<NightScoutInsulinCache>(
+                predicate: #Predicate<NightScoutInsulinCache> { cache in
+                    cache.sourceInfo == "Test Data" && cache.timestamp >= timeStart && cache.timestamp <= timeEnd
+                }
+            )
+            
+            let existingInsulin = try? modelContext.fetch(fetchDescriptor)
+            if existingInsulin?.isEmpty != false {
+                let insulinCache = NightScoutInsulinCache(
+                    timestamp: timestamp,
+                    insulinAmount: amount,
+                    insulinType: type,
+                    nightScoutId: testUUID,
+                    sourceInfo: "Test Data"
+                )
+                insulinCache.updateDecayedAmount()
+                modelContext.insert(insulinCache)
+                insulinCount += 1
+                print("💉 Added test insulin: \(String(format: "%.2f", amount)) U (\(type)) at \(timestamp.formatted(.dateTime.hour().minute()))")
+            }
+        }
+        
+        // Insert test carb data
+        for (timestamp, amount, type) in testCarbIntakes {
+            let testUUID = "test-carbs-\(UUID().uuidString)"
+            
+            // Check if similar test data already exists to avoid duplicates
+            // Calculate time range outside predicate to avoid unsupported function calls
+            let timeStart = timestamp.addingTimeInterval(-60)
+            let timeEnd = timestamp.addingTimeInterval(60)
+            let fetchDescriptor = FetchDescriptor<NightScoutCarbCache>(
+                predicate: #Predicate<NightScoutCarbCache> { cache in
+                    cache.sourceInfo == "Test Data" && cache.timestamp >= timeStart && cache.timestamp <= timeEnd
+                }
+            )
+            
+            let existingCarbs = try? modelContext.fetch(fetchDescriptor)
+            if existingCarbs?.isEmpty != false {
+                let carbCache = NightScoutCarbCache(
+                    timestamp: timestamp,
+                    carbAmount: amount,
+                    carbType: type,
+                    nightScoutId: testUUID,
+                    sourceInfo: "Test Data"
+                )
+                carbCache.updateDecayedAmount()
+                modelContext.insert(carbCache)
+                carbCount += 1
+                print("🍞 Added test carbs: \(String(format: "%.1f", amount)) g (\(type)) at \(timestamp.formatted(.dateTime.hour().minute()))")
+            }
+        }
+        
+        // Save the context
+        do {
+            try modelContext.save()
+            print("✅ Test cache data saved: \(insulinCount) insulin entries, \(carbCount) carb entries")
+            print("🧪 Now run a GPU prediction to see cache-based IOB/COB calculations in the logs!")
+            print("📍 Look for debug logs like:")
+            print("   • 'Glucose range from cache: X.X to Y.Y mmol/L'")
+            print("   • 'IOB from cache: Z.Z units, COB from cache: W.W grams'")
+        } catch {
+            print("❌ Failed to save test cache data: \(error)")
+        }
     }
 }
 
