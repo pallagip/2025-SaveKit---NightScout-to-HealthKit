@@ -8,6 +8,7 @@
 import Foundation
 import WatchConnectivity
 import SwiftData
+import UIKit
 
 class WatchConnectivityManager: NSObject, ObservableObject {
     static let shared = WatchConnectivityManager()
@@ -15,6 +16,10 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     @Published var isWatchConnected = false
     @Published var isPaired = false
     @Published var isWatchAppInstalled = false
+    
+    // Background task management for Watch-triggered operations
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private let backgroundTaskQueue = DispatchQueue(label: "com.watchconnectivity.backgroundtask")
     
     private override init() {
         super.init()
@@ -232,6 +237,10 @@ extension WatchConnectivityManager: WCSessionDelegate {
     // MARK: - GPU Prediction Handling
     private func handleGPUPredictionRequest(message: [String: Any], replyHandler: (([String: Any]) -> Void)? = nil) {
         print("🧠 Processing comprehensive GPU prediction request from watch")
+        print("📱 App state: \(UIApplication.shared.applicationState.rawValue) (0=active, 1=inactive, 2=background)")
+        
+        // Start background task assertion to prevent app suspension during processing
+        startBackgroundTaskForWatchRequest()
         
         // Send immediate acknowledgment
         replyHandler?(["success": true, "status": "processing_started"])
@@ -250,15 +259,22 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 print("✅ Cloud sync completed: \(syncedCount) new readings synced")
                 
                 // Step 2: Cache HealthKit BG data (same as "Cache HealthKit BG Data")
+                // Make this step optional when HealthKit is inaccessible (device locked)
                 print("💾 Step 2/3: Caching HealthKit BG data...")
                 var cachedCount = 0
                 if let modelContainer = BackgroundGPUWaveNetService.shared.getModelContainer() {
                     let modelContext = ModelContext(modelContainer)
-                    cachedCount = try await HealthKitBGSyncService.shared.syncHealthKitBGToCache(
-                        modelContext: modelContext,
-                        hoursBack: 24.0
-                    )
-                    print("✅ HealthKit data cached: \(cachedCount) new BG readings cached")
+                    do {
+                        cachedCount = try await HealthKitBGSyncService.shared.syncHealthKitBGToCache(
+                            modelContext: modelContext,
+                            hoursBack: 24.0
+                        )
+                        print("✅ HealthKit data cached: \(cachedCount) new BG readings cached")
+                    } catch {
+                        print("⚠️ HealthKit caching failed (likely device locked): \(error.localizedDescription)")
+                        print("🔄 Continuing with GPU prediction using existing SwiftData cache...")
+                        cachedCount = 0 // Set to 0 but continue processing
+                    }
                 } else {
                     print("⚠️ Model container not available for caching HealthKit data")
                 }
@@ -287,14 +303,78 @@ extension WatchConnectivityManager: WCSessionDelegate {
                     
                     // Send completion status
                     self.sendGPUProcessingStatusToWatch(isProcessing: false)
+                    
+                    // End background task
+                    self.endBackgroundTaskForWatchRequest()
                 } else {
                     print("❌ GPU prediction completed but no result available")
                     self.sendGPUProcessingStatusToWatch(isProcessing: false)
+                    
+                    // End background task
+                    self.endBackgroundTaskForWatchRequest()
                 }
             } catch {
                 print("❌ Comprehensive prediction process error: \(error.localizedDescription)")
                 self.sendGPUProcessingStatusToWatch(isProcessing: false)
+                
+                // End background task on error
+                self.endBackgroundTaskForWatchRequest()
             }
+        }
+    }
+    
+    // MARK: - Background Task Management
+    private func startBackgroundTaskForWatchRequest() {
+        backgroundTaskQueue.async {
+            DispatchQueue.main.async {
+                // End any existing background task
+                self.endBackgroundTaskForWatchRequest()
+                
+                // Start new background task
+                self.backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WatchGPUPrediction") {
+                    print("⏰ Background task for Watch GPU prediction expired - ending task")
+                    self.endBackgroundTaskForWatchRequest()
+                }
+                
+                if self.backgroundTaskID != .invalid {
+                    print("✅ Started background task for Watch GPU prediction (ID: \(self.backgroundTaskID.rawValue))")
+                } else {
+                    print("❌ Failed to start background task for Watch GPU prediction")
+                }
+            }
+        }
+    }
+    
+    private func endBackgroundTaskForWatchRequest() {
+        backgroundTaskQueue.async {
+            DispatchQueue.main.async {
+                if self.backgroundTaskID != .invalid {
+                    print("🏁 Ending background task for Watch GPU prediction (ID: \(self.backgroundTaskID.rawValue))")
+                    UIApplication.shared.endBackgroundTask(self.backgroundTaskID)
+                    self.backgroundTaskID = .invalid
+                } else {
+                    print("ℹ️ No background task to end for Watch GPU prediction")
+                }
+            }
+        }
+    }
+    
+    // MARK: - App State Monitoring
+    private func checkAppSuspendedState() -> Bool {
+        let appState = UIApplication.shared.applicationState
+        switch appState {
+        case .active:
+            print("📱 App state: Active - full processing available")
+            return false
+        case .inactive:
+            print("📱 App state: Inactive - transitioning, processing available")
+            return false
+        case .background:
+            print("📱 App state: Background - limited processing time")
+            return false
+        @unknown default:
+            print("📱 App state: Unknown - treating as suspended")
+            return true
         }
     }
 }

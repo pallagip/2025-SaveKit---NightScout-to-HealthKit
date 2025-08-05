@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var isProcessingGPU: Bool = false
     @State private var lastGPUPrediction: String = "—"
     @State private var lastGPUTime: String = "—"
+    @State private var processingTimer: Timer? = nil
     @StateObject private var watchManager = WatchConnectivityManager.shared
     
     var body: some View {
@@ -221,7 +222,21 @@ struct ContentView: View {
             return
         }
         
+        // Cancel any existing timer
+        processingTimer?.invalidate()
+        
         isProcessingGPU = true
+        
+        // Start 7-second timeout timer
+        processingTimer = Timer.scheduledTimer(withTimeInterval: 7.0, repeats: false) { _ in
+            DispatchQueue.main.async {
+                if self.isProcessingGPU {
+                    print("⏰ GPU prediction timeout after 7 seconds - stopping processing")
+                    self.isProcessingGPU = false
+                    self.processingTimer = nil
+                }
+            }
+        }
         
         // Send message to iPhone to trigger GPU prediction
         let message = [
@@ -235,13 +250,13 @@ struct ContentView: View {
                 DispatchQueue.main.async {
                     print("✅ GPU prediction request acknowledged by iPhone")
                     if let success = response["success"] as? Bool, !success {
-                        self.isProcessingGPU = false
+                        self.stopProcessing()
                     }
                 }
             }) { error in
                 DispatchQueue.main.async {
                     print("❌ Failed to send GPU prediction request: \(error.localizedDescription)")
-                    self.isProcessingGPU = false
+                    self.stopProcessing()
                 }
             }
         } else {
@@ -251,6 +266,12 @@ struct ContentView: View {
         }
     }
     
+    private func stopProcessing() {
+        isProcessingGPU = false
+        processingTimer?.invalidate()
+        processingTimer = nil
+    }
+    
     private func updateGPUPrediction(prediction: Double, timestamp: Date) {
         lastGPUPrediction = String(format: "%.1f", prediction)
         
@@ -258,7 +279,7 @@ struct ContentView: View {
         formatter.timeStyle = .short
         lastGPUTime = formatter.string(from: timestamp)
         
-        isProcessingGPU = false
+        stopProcessing()
     }
     
 
