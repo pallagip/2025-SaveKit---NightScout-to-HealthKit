@@ -132,6 +132,20 @@ struct ContentView: View {
                 self.isProcessingGPU = isProcessing
             }
         }
+        
+        // Listen for GPU prediction results
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("GPUPredictionUpdate"),
+            object: nil,
+            queue: .main
+        ) { notification in
+            if let userInfo = notification.userInfo,
+               let prediction = userInfo["prediction"] as? Double,
+               let timestamp = userInfo["timestamp"] as? Date {
+                self.updateGPUPrediction(prediction: prediction, timestamp: timestamp)
+                print("✅ Watch received GPU prediction result: \(String(format: "%.1f", prediction)) mmol/L")
+            }
+        }
     }
     
     private func updatePrediction(prediction: Double, timestamp: Date) {

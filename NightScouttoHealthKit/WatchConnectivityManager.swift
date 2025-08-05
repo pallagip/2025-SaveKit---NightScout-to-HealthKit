@@ -7,6 +7,7 @@
 
 import Foundation
 import WatchConnectivity
+import SwiftData
 
 class WatchConnectivityManager: NSObject, ObservableObject {
     static let shared = WatchConnectivityManager()
@@ -230,7 +231,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
     
     // MARK: - GPU Prediction Handling
     private func handleGPUPredictionRequest(message: [String: Any], replyHandler: (([String: Any]) -> Void)? = nil) {
-        print("🧠 Processing GPU prediction request from watch")
+        print("🧠 Processing comprehensive GPU prediction request from watch")
         
         // Send immediate acknowledgment
         replyHandler?(["success": true, "status": "processing_started"])
@@ -238,12 +239,32 @@ extension WatchConnectivityManager: WCSessionDelegate {
         // Send processing status to watch
         sendGPUProcessingStatusToWatch(isProcessing: true)
         
-        // Trigger GPU prediction asynchronously
+        // Trigger comprehensive prediction process asynchronously
         Task { @MainActor in
             do {
-                print("🚀 Starting GPU WaveNet prediction requested from watch")
+                print("🚀 === STARTING COMPREHENSIVE PREDICTION PROCESS FROM WATCH ===")
                 
-                // Use the existing BackgroundGPUWaveNetService
+                // Step 1: Sync data from cloud (same as "Sync Data for 24h")
+                print("📡 Step 1/3: Syncing data from cloud...")
+                let syncedCount = await SyncManager.shared.performSync(isBackground: false)
+                print("✅ Cloud sync completed: \(syncedCount) new readings synced")
+                
+                // Step 2: Cache HealthKit BG data (same as "Cache HealthKit BG Data")
+                print("💾 Step 2/3: Caching HealthKit BG data...")
+                var cachedCount = 0
+                if let modelContainer = BackgroundGPUWaveNetService.shared.getModelContainer() {
+                    let modelContext = ModelContext(modelContainer)
+                    cachedCount = try await HealthKitBGSyncService.shared.syncHealthKitBGToCache(
+                        modelContext: modelContext,
+                        hoursBack: 24.0
+                    )
+                    print("✅ HealthKit data cached: \(cachedCount) new BG readings cached")
+                } else {
+                    print("⚠️ Model container not available for caching HealthKit data")
+                }
+                
+                // Step 3: Run GPU prediction (same as "GPU Predict")
+                print("🔥 Step 3/3: Running GPU WaveNet prediction...")
                 await BackgroundGPUWaveNetService.shared.triggerManualGPUPrediction()
                 
                 // Get the latest prediction result after processing
@@ -252,9 +273,13 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 if predictionStats.averageValue > 0, let lastPredictionTime = predictionStats.lastPrediction {
                     // Convert mg/dL back to mmol/L for watch display
                     let predictionMmol = predictionStats.averageValue / 18.0
-                    print("✅ GPU prediction completed from watch request: \(String(format: "%.1f", predictionMmol)) mmol/L")
+                    print("✅ === COMPREHENSIVE PREDICTION COMPLETE FROM WATCH ===")
+                    print("📊 Summary:")
+                    print("   - Cloud sync: \(syncedCount) readings")
+                    print("   - HealthKit cache: \(cachedCount) readings")
+                    print("   - GPU prediction: \(String(format: "%.1f", predictionMmol)) mmol/L")
                     
-                    // Send result to watch
+                    // Send comprehensive result to watch
                     self.sendGPUPredictionToWatch(
                         prediction: predictionMmol,
                         timestamp: lastPredictionTime
@@ -267,7 +292,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
                     self.sendGPUProcessingStatusToWatch(isProcessing: false)
                 }
             } catch {
-                print("❌ GPU prediction error: \(error.localizedDescription)")
+                print("❌ Comprehensive prediction process error: \(error.localizedDescription)")
                 self.sendGPUProcessingStatusToWatch(isProcessing: false)
             }
         }

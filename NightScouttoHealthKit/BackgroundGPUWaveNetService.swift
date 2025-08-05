@@ -70,6 +70,11 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
         print("🔧 BackgroundGPUWaveNetService: Model container set")
     }
     
+    /// Public getter for model container
+    func getModelContainer() -> ModelContainer? {
+        return modelContainer
+    }
+    
 
     
     // MARK: - Background Task Registration
