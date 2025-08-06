@@ -14,12 +14,44 @@ fileprivate let gpuWaveNetTaskID = "com.ProDiabeticsTeam.NightScouttoHealthKit.g
 struct NightScouttoHealthKitApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
-    // Create the model container that will be shared across the app
+    // Create the model container that will be shared across the app with App Group support
     let modelContainer: ModelContainer = {
         do {
-            return try ModelContainer(for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self, NightScoutInsulinCache.self, NightScoutCarbCache.self)
+            // Get App Group container URL
+            guard let appGroupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ProDiabeticsTeam.NightScouttoHealthKitv1.onesignal") else {
+                print("⚠️ App Group container not available, using default container")
+                return try ModelContainer(for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self, NightScoutInsulinCache.self, NightScoutCarbCache.self)
+            }
+            
+            // Ensure Application Support directory exists
+            let applicationSupportURL = appGroupURL.appendingPathComponent("Library/Application Support")
+            try FileManager.default.createDirectory(at: applicationSupportURL, withIntermediateDirectories: true, attributes: nil)
+            
+            // Configure SwiftData store URL in App Group
+            let storeURL = applicationSupportURL.appendingPathComponent("SaveKitData.store")
+            print("📁 Using SwiftData store at: \(storeURL.path)")
+            
+            // Create ModelContainer with custom configuration
+            let configuration = ModelConfiguration(
+                url: storeURL,
+                cloudKitDatabase: .none // Disable CloudKit for App Group container
+            )
+            
+            return try ModelContainer(
+                for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self, NightScoutInsulinCache.self, NightScoutCarbCache.self,
+                configurations: configuration
+            )
+            
         } catch {
-            fatalError("Failed to create ModelContainer: \(error)")
+            print("❌ ModelContainer creation failed: \(error)")
+            print("🔄 Attempting fallback to default container...")
+            
+            // Fallback to default container if App Group fails
+            do {
+                return try ModelContainer(for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self, NightScoutInsulinCache.self, NightScoutCarbCache.self)
+            } catch {
+                fatalError("Failed to create fallback ModelContainer: \(error)")
+            }
         }
     }()
     

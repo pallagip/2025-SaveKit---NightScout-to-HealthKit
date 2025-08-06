@@ -156,39 +156,55 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
             let context = ModelContext(modelContainer)
             
             print("🧠 Building input tensor for GPU WaveNet prediction...")
+            print("❤️ Using Watch heart rate: \(heartRate) BPM for enhanced prediction")
             
             // Build input tensor using HealthKit data or SwiftData cache
             let healthKitProvider = HealthKitFeatureProvider()
             var inputTensor: MLMultiArray
             var currentBG: Double
+            var effectiveHeartRate = heartRate
             
             do {
-                // Try HealthKit first
+                // Try to use HealthKit data first
                 inputTensor = try await healthKitProvider.buildWindow()
                 currentBG = try await healthKitProvider.fetchLatestGlucoseValue()
+                
+                // If no heart rate from Watch, try to get from HealthKit
+                if effectiveHeartRate <= 0 {
+                    effectiveHeartRate = try await healthKitProvider.fetchLatestHeartRate(minutesBack: 30.0)
+                    print("💓 Using HealthKit heart rate: \(effectiveHeartRate) BPM")
+                } else {
+                    print("⌚ Using Watch heart rate: \(effectiveHeartRate) BPM")
+                }
+                
                 print("✅ Using HealthKit data for GPU prediction")
             } catch {
                 // Fallback to SwiftData cache
                 print("⚠️ HealthKit unavailable, using SwiftData cache")
                 print("🔨 Building input window from SwiftData cache...")
-                inputTensor = try await healthKitProvider.buildWindowFromSwiftDataCache(modelContext: context)
                 
-                // Fetch ALL available glucose data from SwiftData cache (not just 1 reading)
-                let glucoseData = try await healthKitProvider.fetchGlucoseFromSwiftDataCache(modelContext: context, limit: 50)
-                print("✅ Found \(glucoseData.count) cached glucose readings")
+                // For background mode, we need to enhance the input tensor with Watch data
+                inputTensor = try await buildEnhancedBackgroundInputTensor(
+                    healthKitProvider: healthKitProvider,
+                    context: context,
+                    watchHeartRate: effectiveHeartRate
+                )
                 
+                // Get current glucose from cache
+                let glucoseData = try await healthKitProvider.fetchGlucoseFromSwiftDataCache(modelContext: context, limit: 1)
                 guard let latestReading = glucoseData.first else {
-                    throw NSError(domain: "BackgroundGPU", code: 1, userInfo: [NSLocalizedDescriptionKey: "No glucose data available"])
-                }
-                
-                // Log glucose data range for debugging
-                if let oldestReading = glucoseData.last {
-                    print("📈 Latest: \(Int(latestReading.value)) mg/dL at \(latestReading.date)")
-                    print("📉 Oldest: \(Int(oldestReading.value)) mg/dL at \(oldestReading.date)")
+                    throw NSError(domain: "SwiftData", code: 3, userInfo: [NSLocalizedDescriptionKey: "No glucose data in cache"])
                 }
                 
                 currentBG = latestReading.value
-                print("✅ Using SwiftData cache for GPU prediction")
+                
+                // If no heart rate from Watch, use a default reasonable value for background
+                if effectiveHeartRate <= 0 {
+                    effectiveHeartRate = 75.0 // Default resting heart rate
+                    print("💔 No heart rate available, using default: \(effectiveHeartRate) BPM")
+                }
+                
+                print("✅ Using SwiftData cache for GPU prediction with Watch enhancement")
             }
             
             print("🎯 Current BG: \(String(format: "%.1f", currentBG)) mg/dL")
@@ -196,14 +212,14 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
             // Calculate prediction count
             let predictionCount = calculateNextPredictionCount(context: context)
             
-            // Run all WaveNet models in parallel using GPU acceleration
+            // Run all 5 WaveNet models in parallel on GPU with enhanced configuration
             let predictions = await runParallelGPUWaveNetPredictions(
                 window: inputTensor,
                 currentBG: currentBG,
                 usedMgdl: true,
                 predictionCount: predictionCount,
                 context: context,
-                heartRate: heartRate
+                heartRate: effectiveHeartRate
             )
             
             // Calculate average prediction by averaging INDIVIDUAL MODEL PREDICTIONS (not deltas)
@@ -447,6 +463,186 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
         return 1
     }
     
+    /// Build enhanced input tensor for background mode using ONLY Watch data and SwiftData cache
+    /// This method is completely background-safe and makes NO HealthKit calls
+    private func buildEnhancedBackgroundInputTensor(
+        healthKitProvider: HealthKitFeatureProvider,
+        context: ModelContext,
+        watchHeartRate: Double
+    ) async throws -> MLMultiArray {
+        print("🔧 Building enhanced background input tensor with Watch data")
+        print("🚀 BACKGROUND-SAFE MODE: Using only SwiftData cache + Watch data")
+        
+        // Get glucose data from SwiftData cache only
+        let glucoseData = try await healthKitProvider.fetchGlucoseFromSwiftDataCache(modelContext: context, limit: 24)
+        
+        guard !glucoseData.isEmpty else {
+            throw NSError(domain: "SwiftData", code: 3, userInfo: [NSLocalizedDescriptionKey: "No glucose data in SwiftData cache"])
+        }
+        
+        print("📊 Cache data: \(glucoseData.count) glucose readings from SwiftData")
+        
+        // Build tensor manually using only cached data and Watch heart rate
+        // WaveNet models expect [batch_size, timesteps, features] = [1, 24, 8]
+        let tensor = try MLMultiArray(shape: [1, 24, 8], dataType: .float32)
+        
+        let now = Date()
+        let step = 5.0 * 60  // 5 min in seconds
+        
+        // Calculate IOB and COB from SwiftData cache only (no HealthKit calls)
+        let (cachedIOB, cachedCOB) = HealthKitFeatureProvider.calculateActiveIOBandCOBFromCaches(
+            modelContext: context, 
+            now: now
+        )
+        
+        print("💉 Background IOB from cache: \(String(format: "%.2f", cachedIOB)) U")
+        print("🍞 Background COB from cache: \(String(format: "%.1f", cachedCOB)) g")
+        
+        // Create 24 timesteps going backward from now
+        for timestep in 0..<24 {
+            let timestepTime = now.addingTimeInterval(-Double(23 - timestep) * step)
+            
+            // Find closest glucose value to this timestep
+            var glucoseValue = 100.0 // Default
+            var minTimeDiff = Double.infinity
+            
+            for reading in glucoseData {
+                let timeDiff = abs(reading.date.timeIntervalSince(timestepTime))
+                if timeDiff < minTimeDiff {
+                    minTimeDiff = timeDiff
+                    glucoseValue = reading.value
+                }
+            }
+            
+            // Calculate trends
+            let bgTrend: Double
+            let hrTrend: Double = 0.0 // No Watch HR trend in background
+            
+            if timestep > 0 {
+                // Get previous glucose for trend calculation
+                let prevTimestepTime = now.addingTimeInterval(-Double(24 - timestep) * step)
+                var prevGlucoseValue = glucoseValue
+                var prevMinTimeDiff = Double.infinity
+                
+                for reading in glucoseData {
+                    let timeDiff = abs(reading.date.timeIntervalSince(prevTimestepTime))
+                    if timeDiff < prevMinTimeDiff {
+                        prevMinTimeDiff = timeDiff
+                        prevGlucoseValue = reading.value
+                    }
+                }
+                
+                bgTrend = (glucoseValue - prevGlucoseValue) / 18.0 / 5.0 // Convert to mmol/L per minute
+            } else {
+                bgTrend = 0.0
+            }
+            
+            // Calculate circadian features
+            let calendar = Calendar.current
+            let hour = Double(calendar.component(.hour, from: timestepTime))
+            let minute = Double(calendar.component(.minute, from: timestepTime))
+            let hourFraction = hour + minute / 60.0
+            let hourSin = sin(2.0 * .pi * hourFraction / 24.0)
+            let hourCos = cos(2.0 * .pi * hourFraction / 24.0)
+            
+            // Fill tensor features for this timestep
+            let baseIndex = timestep * 8
+            
+            // Feature 0: blood_glucose (convert mg/dL to mmol/L)
+            tensor[baseIndex] = NSNumber(value: glucoseValue / 18.0)
+            
+            // Feature 1: insulin_dose (distributed IOB)
+            tensor[baseIndex + 1] = NSNumber(value: cachedIOB / 24.0)
+            
+            // Feature 2: dietary_carbohydrates (distributed COB)
+            tensor[baseIndex + 2] = NSNumber(value: cachedCOB / 24.0)
+            
+            // Feature 3: heart_rate (from Watch, normalized)
+            let normalizedHR = (watchHeartRate - 70.0) / 30.0
+            tensor[baseIndex + 3] = NSNumber(value: normalizedHR)
+            
+            // Feature 4: bg_trend
+            tensor[baseIndex + 4] = NSNumber(value: bgTrend)
+            
+            // Feature 5: hr_trend (no trend available in background)
+            tensor[baseIndex + 5] = NSNumber(value: hrTrend)
+            
+            // Feature 6: hour_sin (circadian)
+            tensor[baseIndex + 6] = NSNumber(value: hourSin)
+            
+            // Feature 7: hour_cos (circadian)
+            tensor[baseIndex + 7] = NSNumber(value: hourCos)
+        }
+        
+        print("✅ Enhanced background tensor built with Watch HR: \(watchHeartRate) BPM")
+        print("🎯 Background tensor features: glucose, IOB=\(String(format: "%.2f", cachedIOB)), COB=\(String(format: "%.1f", cachedCOB)), HR=\(watchHeartRate)")
+        
+        return tensor
+    }
+    
+    /// Helper function to copy MLMultiArray data
+    private func copyMLMultiArrayData(_ original: MLMultiArray) -> MLMultiArray {
+        guard let copy = try? MLMultiArray(shape: original.shape, dataType: original.dataType) else {
+            fatalError("Failed to create MLMultiArray copy")
+        }
+        
+        let originalPtr = original.dataPointer.bindMemory(to: Float32.self, capacity: original.count)
+        let copyPtr = copy.dataPointer.bindMemory(to: Float32.self, capacity: copy.count)
+        
+        for i in 0..<original.count {
+            copyPtr[i] = originalPtr[i]
+        }
+        
+        return copy
+    }
+    
+    /// Enhance insulin and carb features in the tensor with fresh HealthKit data
+    private func enhanceInsulinCarbFeatures(
+        tensor: MLMultiArray,
+        insulinData: [HealthKitFeatureProvider.InsulinDose],
+        carbData: [HealthKitFeatureProvider.CarbIntake]
+    ) async {
+        let timeSteps = tensor.shape[0].intValue
+        let currentTime = Date()
+        
+        // For each timestep, calculate insulin and carb values based on timing
+        for timestep in 0..<timeSteps {
+            let timestepTime = currentTime.addingTimeInterval(-Double(timeSteps - timestep) * 60 * 5) // 5-min intervals
+            
+            // Calculate insulin dose for this timestep (within 1 hour)
+            var insulinDose = 0.0
+            for insulin in insulinData {
+                let timeDiff = abs(insulin.timestamp.timeIntervalSince(timestepTime))
+                if timeDiff <= 3600 { // Within 1 hour
+                    let decayFactor = max(0, 1.0 - (timeDiff / 3600)) // Linear decay
+                    insulinDose += insulin.units * decayFactor
+                }
+            }
+            
+            // Calculate carb amount for this timestep (within 2 hours)
+            var carbAmount = 0.0
+            for carb in carbData {
+                let timeDiff = abs(carb.timestamp.timeIntervalSince(timestepTime))
+                if timeDiff <= 7200 { // Within 2 hours
+                    let decayFactor = max(0, 1.0 - (timeDiff / 7200)) // Linear decay
+                    carbAmount += carb.grams * decayFactor
+                }
+            }
+            
+            // Update tensor features
+            let insulinFeatureIndex = 1 // insulin_dose is feature index 1
+            let carbFeatureIndex = 2    // dietary_carbohydrates is feature index 2
+            
+            let insulinIndex = [timestep as NSNumber, insulinFeatureIndex as NSNumber]
+            let carbIndex = [timestep as NSNumber, carbFeatureIndex as NSNumber]
+            
+            tensor[insulinIndex] = NSNumber(value: insulinDose)
+            tensor[carbIndex] = NSNumber(value: carbAmount)
+        }
+        
+        print("🔧 Enhanced tensor with fresh insulin/carb data from HealthKit")
+    }
+    
     // MARK: - Completion Notification
     private func sendCompletionNotification(averagePrediction: Double, modelCount: Int) async {
         let content = UNMutableNotificationContent()
@@ -473,6 +669,94 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
     func triggerManualGPUPrediction(heartRate: Double = 0.0) async {
         print("🎯 Manual GPU WaveNet prediction triggered with Heart Rate: \(heartRate) BPM")
         await runImmediateGPUWaveNetPrediction(heartRate: heartRate)
+    }
+    
+    /// Trigger enhanced GPU prediction with comprehensive Watch-collected health data
+    /// This method integrates Watch data into the background-safe prediction pipeline
+    func triggerEnhancedWatchGPUPrediction(
+        heartRate: Double,
+        watchInsulin: Double,
+        watchCarbs: Double,
+        watchGlucose: Double,
+        watchTrend: Double
+    ) async {
+        print("🎯 Enhanced Watch GPU WaveNet prediction triggered")
+        print("⌚ Watch Data - HR: \(heartRate), Insulin: \(watchInsulin), Carbs: \(watchCarbs), Glucose: \(watchGlucose), Trend: \(watchTrend)")
+        
+        // Store Watch data for background prediction use
+        await storeWatchDataForBackgroundUse(
+            insulin: watchInsulin,
+            carbs: watchCarbs,
+            glucose: watchGlucose,
+            trend: watchTrend
+        )
+        
+        // Trigger GPU prediction with Watch heart rate
+        await runImmediateGPUWaveNetPrediction(heartRate: heartRate)
+    }
+    
+    /// Store Watch-collected health data in SwiftData for background prediction use
+    /// This ensures fresh data is available even when HealthKit is inaccessible
+    private func storeWatchDataForBackgroundUse(
+        insulin: Double,
+        carbs: Double,
+        glucose: Double,
+        trend: Double
+    ) async {
+        guard let modelContainer = self.modelContainer else {
+            print("❌ Model container not available for Watch data storage")
+            return
+        }
+        
+        let context = ModelContext(modelContainer)
+        let now = Date()
+        
+        do {
+            // Store Watch insulin data if significant
+            if insulin > 0.1 {
+                let watchInsulinEntry = NightScoutInsulinCache(
+                    timestamp: now,
+                    insulinAmount: insulin,
+                    insulinType: "Watch-Enhanced",
+                    nightScoutId: "watch-insulin-\(UUID().uuidString)",
+                    sourceInfo: "Apple Watch HealthKit"
+                )
+                context.insert(watchInsulinEntry)
+                print("💉 Stored Watch insulin: \(String(format: "%.2f", insulin)) units")
+            }
+            
+            // Store Watch carb data if significant
+            if carbs > 1.0 {
+                let watchCarbEntry = NightScoutCarbCache(
+                    timestamp: now,
+                    carbAmount: carbs,
+                    carbType: "Watch-Enhanced",
+                    nightScoutId: "watch-carb-\(UUID().uuidString)",
+                    sourceInfo: "Apple Watch HealthKit"
+                )
+                context.insert(watchCarbEntry)
+                print("🍞 Stored Watch carbs: \(String(format: "%.1f", carbs)) grams")
+            }
+            
+            // Store Watch glucose data if valid and recent
+            if glucose > 50.0 && glucose < 500.0 {
+                let watchBGEntry = HealthKitBGCache(
+                    timestamp: now,
+                    bloodGlucose_mmol: glucose / 18.0, // Convert mg/dL to mmol/L
+                    healthKitUUID: "watch-bg-\(UUID().uuidString)",
+                    sourceInfo: "Apple Watch CGM (trend: \(String(format: "%.2f", trend)))"
+                )
+                context.insert(watchBGEntry)
+                print("🩸 Stored Watch glucose: \(String(format: "%.0f", glucose)) mg/dL (trend: \(String(format: "%.2f", trend)))")
+            }
+            
+            // Save all Watch data to SwiftData
+            try context.save()
+            print("✅ Watch health data successfully stored for background prediction use")
+            
+        } catch {
+            print("❌ Failed to store Watch data for background use: \(error.localizedDescription)")
+        }
     }
     
     func getBackgroundPredictionStats() -> (count: Int, lastPrediction: Date?, averageValue: Double) {

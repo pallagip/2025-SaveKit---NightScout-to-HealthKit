@@ -20,14 +20,14 @@
 		<string>com.ProDiabeticsTeam.NightScouttoHealthKit.processing</string>
 		<string>com.ProDiabeticsTeam.NightScouttoHealthKit.gpu-wavenet</string>
 	</array>
+	<key>com.apple.developer.background-tasks.continued-processing.gpu</key>
+	<true/>
 	<key>APSEnvironment</key>
 	<string>production</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>WKWatchKitApp</key>
 	<string>$(WK_WATCHKIT_APP:default=NO)</string>
-
-	<!-- HealthKit usage descriptions required for heart rate access -->
 	<key>NSHealthShareUsageDescription</key>
 	<string>Allow NightScout to read your heart rate to improve glucose predictions.</string>
 	<key>NSHealthUpdateUsageDescription</key>

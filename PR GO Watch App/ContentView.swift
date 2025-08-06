@@ -259,15 +259,27 @@ struct ContentView: View {
             }
         }
         
-        // Send message to iPhone to trigger GPU prediction
+        // Get comprehensive health data from Watch for enhanced background prediction
+        let healthData = healthKitManager.getComprehensiveHealthData()
+        
+        // Send comprehensive message to iPhone to trigger enhanced GPU prediction
         let message = [
             "type": "trigger_gpu_prediction",
             "timestamp": Date().timeIntervalSince1970,
-            "source": "watch_button",
-            "heart_rate": healthKitManager.heartRate // Include latest heart rate
+            "source": "watch_button_enhanced",
+            "heart_rate": healthData.heartRate,
+            "insulin_dose": healthData.insulin,
+            "carb_amount": healthData.carbs,
+            "glucose_value": healthData.glucose,
+            "glucose_trend": healthData.glucoseTrend
         ] as [String: Any]
         
-        print("❤️ Sending heart rate to iPhone: \(healthKitManager.heartRate)")
+        print("🧠 Sending comprehensive health data to iPhone:")
+        print("   ❤️ Heart Rate: \(healthData.heartRate) BPM")
+        print("   💉 Insulin: \(healthData.insulin) units")
+        print("   🍞 Carbs: \(healthData.carbs) grams")
+        print("   🩸 Glucose: \(healthData.glucose) mg/dL")
+        print("   📈 Trend: \(String(format: "%.2f", healthData.glucoseTrend)) mg/dL/min")
         
         if WCSession.default.isReachable {
             WCSession.default.sendMessage(message, replyHandler: { response in

@@ -243,37 +243,77 @@ extension WatchConnectivityManager: WCSessionDelegate {
     
     // MARK: - GPU Prediction Handling
     private func handleGPUPredictionRequest(message: [String: Any], heartRate: Double, replyHandler: (([String: Any]) -> Void)? = nil) {
-        print("❤️ Received Heart Rate from watch: \(heartRate) BPM")
-        print("🧠 Processing comprehensive GPU prediction request from watch")
+        // Extract comprehensive health data from Watch message
+        let watchInsulin = message["insulin_dose"] as? Double ?? 0.0
+        let watchCarbs = message["carb_amount"] as? Double ?? 0.0
+        let watchGlucose = message["glucose_value"] as? Double ?? 0.0
+        let watchGlucoseTrend = message["glucose_trend"] as? Double ?? 0.0
+        let source = message["source"] as? String ?? "watch_button"
+        
+        print("🧠 === ENHANCED WATCH-TRIGGERED GPU PREDICTION ===")
+        print("📊 Received comprehensive health data from Watch:")
+        print("   ❤️ Heart Rate: \(heartRate) BPM")
+        print("   💉 Insulin: \(watchInsulin) units")
+        print("   🍞 Carbs: \(watchCarbs) grams")
+        print("   🩸 Glucose: \(watchGlucose) mg/dL")
+        print("   📈 Trend: \(String(format: "%.2f", watchGlucoseTrend)) mg/dL/min")
+        print("   📱 Source: \(source)")
+        
         // Check app state on main thread
         Task { @MainActor in
             print("📱 App state: \(UIApplication.shared.applicationState.rawValue) (0=active, 1=inactive, 2=background)")
         }
         
         // Start background task assertion to prevent app suspension during processing
-        startBackgroundTaskForWatchRequest()
+        self.startBackgroundTaskForWatchRequest()
         
-        // Send immediate acknowledgment
-        replyHandler?(["success": true, "status": "processing_started"])
+        // Send immediate acknowledgment with enhanced status
+        replyHandler?(["success": true, "status": "enhanced_processing_started", "data_received": true])
         
         // Send processing status to watch
         sendGPUProcessingStatusToWatch(isProcessing: true)
         
-        // Trigger comprehensive prediction process asynchronously
+        // Trigger enhanced prediction process asynchronously
         Task { @MainActor in
-            print("🚀 === COMPREHENSIVE WATCH-TRIGGERED PREDICTION ===")
+            print("🚀 === ENHANCED COMPREHENSIVE WATCH-TRIGGERED PREDICTION ===")
             
-            // Step 1: Comprehensive sync (glucose from NightScout + insulin/carbs from HealthKit to SwiftData)
-            print("🔄 Step 1/2: Comprehensive data sync...")
-            let syncResults = await self.performComprehensiveNightScoutSync()
-            print("✅ Sync completed - Glucose: \(syncResults.glucose), Insulin: \(syncResults.insulin), Carbs: \(syncResults.carbs)")
+            // Step 1: Enhanced sync with Watch data integration
+            print("🔄 Step 1/2: Enhanced data sync with Watch integration...")
+            var syncResults: (glucose: Int, insulin: Int, carbs: Int, watchDataIntegrated: Bool) = (0, 0, 0, false)
+            do {
+                syncResults = try await self.performEnhancedWatchDataSync(
+                    watchInsulin: watchInsulin,
+                    watchCarbs: watchCarbs,
+                    watchGlucose: watchGlucose,
+                    watchTrend: watchGlucoseTrend
+                )
+                print("✅ Enhanced sync completed - Glucose: \(syncResults.glucose), Insulin: \(syncResults.insulin), Carbs: \(syncResults.carbs), Watch Data: \(syncResults.watchDataIntegrated)")
+            } catch {
+                print("❌ Failed to perform enhanced watch data sync: \(error.localizedDescription)")
+            }
             
-            // Step 2: GPU prediction using fresh SwiftData
-            // Step 2: Trigger GPU processing with the latest synced data and heart rate
-            await BackgroundGPUWaveNetService.shared.triggerManualGPUPrediction(heartRate: heartRate)
+            // Step 2: Execute GPU WaveNet prediction with comprehensive Watch data
+            print("🔄 Step 2/2: Executing GPU WaveNet prediction with Watch data...")
+            await BackgroundGPUWaveNetService.shared.triggerEnhancedWatchGPUPrediction(
+                heartRate: heartRate,
+                watchInsulin: watchInsulin,
+                watchCarbs: watchCarbs, 
+                watchGlucose: watchGlucose,
+                watchTrend: watchGlucoseTrend
+            )
+            
+            // Wait a moment for prediction to complete
+            do {
+                try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+            } catch {
+                print("⚠️ Task sleep interrupted: \(error)")
+            }
+            
+            print("✅ GPU prediction execution completed")
             
             // Get the latest prediction result after processing
             let predictionStats = BackgroundGPUWaveNetService.shared.getBackgroundPredictionStats()
+            print("📊 Prediction stats after GPU execution: count=\(predictionStats.count), average=\(predictionStats.averageValue)")
             
             if predictionStats.averageValue > 0, let lastPredictionTime = predictionStats.lastPrediction {
                 // Convert mg/dL back to mmol/L for watch display
@@ -430,14 +470,107 @@ extension WatchConnectivityManager: WCSessionDelegate {
             }
             
             // Save all changes
-            try modelContext.save()
-            print("✅ HealthKit sync completed - Insulin: \(insulinCount), Carbs: \(carbsCount)")
+            do {
+                try modelContext.save()
+                print("✅ HealthKit sync completed - Insulin: \(insulinCount), Carbs: \(carbsCount)")
+            } catch {
+                print("❌ Failed to save HealthKit sync changes: \(error.localizedDescription)")
+            }
             
         } catch {
             print("❌ HealthKit sync failed: \(error.localizedDescription)")
         }
         
         return (insulinCount, carbsCount)
+    }
+    
+    // MARK: - Enhanced Watch Data Sync
+    /// Performs enhanced sync integrating Watch data with NightScout and HealthKit data
+    /// - Parameters:
+    ///   - watchInsulin: Insulin dose from Watch HealthKit
+    ///   - watchCarbs: Carb amount from Watch HealthKit
+    ///   - watchGlucose: Glucose value from Watch HealthKit
+    ///   - watchTrend: Glucose trend from Watch HealthKit
+    /// - Returns: Enhanced sync results with Watch data integration status
+    @MainActor
+    private func performEnhancedWatchDataSync(
+        watchInsulin: Double,
+        watchCarbs: Double, 
+        watchGlucose: Double,
+        watchTrend: Double
+    ) async -> (glucose: Int, insulin: Int, carbs: Int, watchDataIntegrated: Bool) {
+        print("🔄 === ENHANCED WATCH DATA SYNC STARTED ===")
+        
+        // First, perform the standard comprehensive sync
+        let standardSync = await performComprehensiveNightScoutSync()
+        
+        // Then, integrate Watch data if available and recent
+        var watchDataIntegrated = false
+        
+        do {
+            let modelContainer = try ModelContainer(for: HealthKitBGCache.self, NightScoutInsulinCache.self, NightScoutCarbCache.self)
+            let context = ModelContext(modelContainer)
+            let currentTime = Date()
+            
+            // Integrate Watch insulin data if significant
+            if watchInsulin > 0.1 {
+                let watchInsulinEntry = NightScoutInsulinCache(
+                    timestamp: currentTime,
+                    insulinAmount: watchInsulin,
+                    insulinType: "rapid",
+                    nightScoutId: "watch-\(UUID().uuidString)",
+                    sourceInfo: "Watch-Enhanced"
+                )
+                context.insert(watchInsulinEntry)
+                print("💉 Integrated Watch insulin: \(watchInsulin) units")
+                watchDataIntegrated = true
+            }
+            
+            // Integrate Watch carb data if significant
+            if watchCarbs > 1.0 {
+                let watchCarbEntry = NightScoutCarbCache(
+                    timestamp: currentTime,
+                    carbAmount: watchCarbs,
+                    carbType: "meal",
+                    nightScoutId: "watch-carb-\(UUID().uuidString)",
+                    sourceInfo: "Watch-Enhanced"
+                )
+                context.insert(watchCarbEntry)
+                print("🍞 Integrated Watch carbs: \(watchCarbs) grams")
+                watchDataIntegrated = true
+            }
+            
+            // Integrate Watch glucose data if significant and recent
+            if watchGlucose > 50.0 {
+                let watchBGEntry = HealthKitBGCache(
+                    timestamp: currentTime,
+                    bloodGlucose_mmol: watchGlucose / 18.0, // Convert mg/dL to mmol/L
+                    healthKitUUID: "watch-bg-\(UUID().uuidString)",
+                    sourceInfo: "Watch-Enhanced-BG"
+                )
+                context.insert(watchBGEntry)
+                print("🩸 Integrated Watch glucose: \(watchGlucose) mg/dL (trend: \(String(format: "%.2f", watchTrend)))")
+                watchDataIntegrated = true
+            }
+            
+            // Save integrated Watch data
+            if watchDataIntegrated {
+                do {
+                    try context.save()
+                    print("✅ Watch data integration completed and saved")
+                } catch {
+                    print("❌ Failed to save Watch data integration: \(error.localizedDescription)")
+                }
+            } else {
+                print("ℹ️ No significant Watch data to integrate")
+            }
+            
+        } catch {
+            print("❌ Error integrating Watch data: \(error)")
+        }
+        
+        print("🔄 === ENHANCED WATCH DATA SYNC COMPLETED ===")
+        return (glucose: standardSync.glucose, insulin: standardSync.insulin, carbs: standardSync.carbs, watchDataIntegrated: watchDataIntegrated)
     }
     
     // MARK: - NightScout API Integration
@@ -474,45 +607,12 @@ extension WatchConnectivityManager: WCSessionDelegate {
             
             let nightScoutService = NightscoutService(baseURL: baseURL, apiSecret: apiSecret, apiToken: apiToken)
             
-            // 1. Fetch glucose data (24 hours)
-            print("📥 Fetching 24 hours of glucose data from NightScout API...")
-            let glucoseEntries = try await nightScoutService.fetchGlucoseData(minutes: 1440)
-            print("✅ Fetched \(glucoseEntries.count) glucose entries from API")
-            
-            // Cache glucose entries (existing logic)
-            for entry in glucoseEntries {
-                guard isValidGlucoseValue(mgdl: entry.sgv) else { continue }
-                let startTime = entry.date.addingTimeInterval(-60) // 1 minute window
-                let endTime = entry.date.addingTimeInterval(60)
-                
-                let fetchDescriptor = FetchDescriptor<HealthKitBGCache>(
-                    predicate: #Predicate<HealthKitBGCache> { cache in
-                        cache.timestamp >= startTime && cache.timestamp <= endTime
-                    }
-                )
-                
-                let existingEntries = try modelContext.fetch(fetchDescriptor)
-                if existingEntries.isEmpty {
-                    let cacheEntry = HealthKitBGCache(
-                        timestamp: entry.date,
-                        bloodGlucose_mmol: entry.sgv / 18.0,
-                        healthKitUUID: "nightscout_\(entry.date.timeIntervalSince1970)",
-                        sourceInfo: "NightScout API"
-                    )
-                    modelContext.insert(cacheEntry)
-                    glucoseCount += 1
-                }
-            }
-            
-            // 2. Cache HealthKit insulin data to SwiftData (app must be foregrounded)
-            print("💉 Caching HealthKit insulin data to SwiftData...")
-            let healthKitProvider = HealthKitFeatureProvider()
-            
-            do {
-                // Fetch insulin from HealthKit (last 4 hours)
-                let insulinType = HKQuantityType.quantityType(forIdentifier: .insulinDelivery)!
-                let fourHoursAgo = Date().addingTimeInterval(-4 * 3600)
-                let predicate = HKQuery.predicateForSamples(withStart: fourHoursAgo, end: Date(), options: .strictStartDate)
+                print("📱 App is active - fetching HealthKit insulin data")
+                do {
+                    // Fetch insulin from HealthKit (last 4 hours)
+                    let insulinType = HKQuantityType.quantityType(forIdentifier: .insulinDelivery)!
+                    let fourHoursAgo = Date().addingTimeInterval(-4 * 3600)
+                    let predicate = HKQuery.predicateForSamples(withStart: fourHoursAgo, end: Date(), options: .strictStartDate)
                 
                 let insulinSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
                     let query = HKSampleQuery(sampleType: insulinType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
@@ -558,14 +658,16 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 print("⚠️ Failed to cache HealthKit insulin: \(error.localizedDescription)")
             }
             
-            // 3. Cache HealthKit carbohydrate data to SwiftData
-            print("🍞 Caching HealthKit carb data to SwiftData...")
-            
-            do {
-                // Fetch carbs from HealthKit (last 5 hours)
-                let carbType = HKQuantityType.quantityType(forIdentifier: .dietaryCarbohydrates)!
-                let fiveHoursAgo = Date().addingTimeInterval(-5 * 3600)
-                let carbPredicate = HKQuery.predicateForSamples(withStart: fiveHoursAgo, end: Date(), options: .strictStartDate)
+            // 3. Cache HealthKit carbohydrate data to SwiftData (only when app is active)
+            print("🍞 Checking HealthKit carb data availability...")
+            let appState = await UIApplication.shared.applicationState
+            if appState == .active {
+                print("📱 App is active - fetching HealthKit carb data")
+                do {
+                    // Fetch carbs from HealthKit (last 5 hours)
+                    let carbType = HKQuantityType.quantityType(forIdentifier: .dietaryCarbohydrates)!
+                    let fiveHoursAgo = Date().addingTimeInterval(-5 * 3600)
+                    let carbPredicate = HKQuery.predicateForSamples(withStart: fiveHoursAgo, end: Date(), options: .strictStartDate)
                 
                 let carbSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
                     let query = HKSampleQuery(sampleType: carbType, predicate: carbPredicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
@@ -607,13 +709,20 @@ extension WatchConnectivityManager: WCSessionDelegate {
                     }
                 }
                 
-            } catch {
-                print("⚠️ Failed to cache HealthKit carbs: \(error.localizedDescription)")
+                } catch {
+                    print("⚠️ Failed to cache HealthKit carbs: \(error.localizedDescription)")
+                }
+            } else {
+                print("📱 App is backgrounded - skipping HealthKit carb fetch to prevent hanging")
             }
             
             // Save all changes
-            try modelContext.save()
-            print("✅ Comprehensive sync completed - Glucose: \(glucoseCount), Insulin: \(insulinCount), Carbs: \(carbsCount)")
+            do {
+                try modelContext.save()
+                print("✅ Comprehensive sync completed - Glucose: \(glucoseCount), Insulin: \(insulinCount), Carbs: \(carbsCount)")
+            } catch {
+                print("❌ Failed to save comprehensive sync changes: \(error.localizedDescription)")
+            }
             
         } catch {
             print("❌ Comprehensive sync failed: \(error.localizedDescription)")
@@ -787,9 +896,12 @@ extension WatchConnectivityManager: WCSessionDelegate {
         
         return true
     }
+}
+
+// MARK: - Background Task Management & App State
+extension WatchConnectivityManager {
     
-    // MARK: - Background Task Management
-    private func startBackgroundTaskForWatchRequest() {
+    func startBackgroundTaskForWatchRequest() {
         backgroundTaskQueue.async {
             DispatchQueue.main.async {
                 // End any existing background task
@@ -810,7 +922,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
         }
     }
     
-    private func endBackgroundTaskForWatchRequest() {
+    func endBackgroundTaskForWatchRequest() {
         backgroundTaskQueue.async {
             DispatchQueue.main.async {
                 if self.backgroundTaskID != .invalid {
@@ -825,7 +937,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
     }
     
     // MARK: - App State Monitoring
-    private func checkAppSuspendedState() -> Bool {
+    func checkAppSuspendedState() -> Bool {
         let appState = UIApplication.shared.applicationState
         switch appState {
         case .active:
@@ -843,3 +955,4 @@ extension WatchConnectivityManager: WCSessionDelegate {
         }
     }
 }
+
