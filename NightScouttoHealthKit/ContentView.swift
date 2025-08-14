@@ -50,32 +50,9 @@ struct BGPredictionView: View {
     @State private var refreshID = UUID() // Track when to refresh predictions
     @State private var isRefreshing = false // Track refresh status
     
-    // Computed property to deduplicate predictions based on timestamp proximity and values
+    // Show all predictions (no deduplication) so individual model outputs are visible
     private var predictions: [Prediction] {
-        var uniquePredictions: [Prediction] = []
-        
-        for prediction in allPredictions {
-            // Check if we already have a prediction that's very similar
-            let isDuplicate = uniquePredictions.contains { existing in
-                // Consider predictions duplicates if they are within 30 seconds of each other
-                // and have the same prediction value (within 0.1 tolerance)
-                let timeThreshold: TimeInterval = 30.0 // 30 seconds
-                let valueThreshold: Double = 0.1 // 0.1 mmol/L or mg/dL tolerance
-                
-                let timeDifference = abs(existing.timestamp.timeIntervalSince(prediction.timestamp))
-                let valueDifference = abs(existing.predictionValueInMmol - prediction.predictionValueInMmol)
-                
-                return timeDifference <= timeThreshold && valueDifference <= valueThreshold
-            }
-            
-            if !isDuplicate {
-                uniquePredictions.append(prediction)
-            } else {
-                print("🔄 Filtered duplicate prediction: \(prediction.timestamp) with value \(String(format: "%.1f", prediction.predictionValueInMmol)) mmol/L")
-            }
-        }
-        
-        return uniquePredictions
+        allPredictions
     }
 
     var body: some View {
@@ -100,7 +77,7 @@ struct BGPredictionView: View {
                                 .foregroundStyle(.secondary)
                             Text(wavenet1Text)
                                 .font(.title3)
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(colorForModelIndex(1))
                         }
                         .padding(8)
                         .background(Color(.systemGray6))
@@ -112,7 +89,7 @@ struct BGPredictionView: View {
                                 .foregroundStyle(.secondary)
                             Text(wavenet2Text)
                                 .font(.title3)
-                                .foregroundStyle(.green)
+                                .foregroundStyle(colorForModelIndex(2))
                         }
                         .padding(8)
                         .background(Color(.systemGray6))
@@ -124,7 +101,7 @@ struct BGPredictionView: View {
                                 .foregroundStyle(.secondary)
                             Text(wavenet3Text)
                                 .font(.title3)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(colorForModelIndex(3))
                         }
                         .padding(8)
                         .background(Color(.systemGray6))
@@ -136,7 +113,7 @@ struct BGPredictionView: View {
                                 .foregroundStyle(.secondary)
                             Text(wavenet4Text)
                                 .font(.title3)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(colorForModelIndex(4))
                         }
                         .padding(8)
                         .background(Color(.systemGray6))
@@ -148,7 +125,7 @@ struct BGPredictionView: View {
                                 .foregroundStyle(.secondary)
                             Text(wavenet5Text)
                                 .font(.title3)
-                                .foregroundStyle(.purple)
+                                .foregroundStyle(colorForModelIndex(5))
                         }
                         .padding(8)
                         .background(Color(.systemGray6))
@@ -275,7 +252,7 @@ struct BGPredictionView: View {
                                     Text(prediction.predictionCount > 0 ? "\(prediction.predictionCount)" : "—")
                                         .font(.caption)
                                         .fontWeight(.medium)
-                                        .foregroundStyle(prediction.isAveragePrediction ? .blue : .primary)
+                                        .foregroundStyle(prediction.isAveragePrediction ? .blue : colorForModelIndex(prediction.modelIndex))
                                         .frame(width: 30, alignment: .leading)
                                     
                                     Text(prediction.formattedDate)
@@ -287,12 +264,13 @@ struct BGPredictionView: View {
                                          String(format: "%.1f", prediction.predictionValueInMmol))
                                         .frame(width: 80, alignment: .trailing)
                                         .fontWeight(prediction.isAveragePrediction ? .bold : .regular)
+                                        .foregroundStyle(prediction.isAveragePrediction ? .blue : colorForModelIndex(prediction.modelIndex))
                                     
                                     // Show model type or average indicator
                                     Text(prediction.isAveragePrediction ? "AVG" : 
                                          prediction.modelIndex > 0 ? "M\(prediction.modelIndex)" : "")
                                         .font(.caption)
-                                        .foregroundStyle(prediction.isAveragePrediction ? .blue : .secondary)
+                                        .foregroundStyle(prediction.isAveragePrediction ? .blue : colorForModelIndex(prediction.modelIndex))
                                         .frame(width: 40, alignment: .trailing)
                                 }
                                 .padding(.vertical, 4)
@@ -509,6 +487,29 @@ struct BGPredictionView: View {
                 String(format: "%.1f", prediction5.modelOutput)
         } else {
             wavenet5Text = "—"
+        }
+    }
+
+    // Map model index to exact hex colors
+    // WaveNet1: #007AFF (blue)
+    // WaveNet2: #34C759 (green)
+    // WaveNet3: #FF9500 (orange)
+    // WaveNet4: #FF3B30 (red)
+    // WaveNet5: #AF52DE (purple)
+    private func colorForModelIndex(_ index: Int) -> Color {
+        switch index {
+        case 1: // #007AFF
+            return Color(.sRGB, red: 0/255, green: 122/255, blue: 255/255, opacity: 1)
+        case 2: // #34C759
+            return Color(.sRGB, red: 52/255, green: 199/255, blue: 89/255, opacity: 1)
+        case 3: // #FF9500
+            return Color(.sRGB, red: 255/255, green: 149/255, blue: 0/255, opacity: 1)
+        case 4: // #FF3B30
+            return Color(.sRGB, red: 255/255, green: 59/255, blue: 48/255, opacity: 1)
+        case 5: // #AF52DE
+            return Color(.sRGB, red: 175/255, green: 82/255, blue: 222/255, opacity: 1)
+        default:
+            return Color.primary
         }
     }
     
