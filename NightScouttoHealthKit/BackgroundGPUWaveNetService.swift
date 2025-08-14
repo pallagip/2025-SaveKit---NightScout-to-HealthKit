@@ -776,32 +776,60 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
         let now = Date()
         
         do {
-            // Cache insulin if trusted timestamp is available
+            // Cache insulin if trusted timestamp is available (dedupe by time±3m & amount tolerance)
             if insulin > 0.1, let ts = insulinTimestamp {
-                let ins = NightScoutInsulinCache(
-                    timestamp: ts,
-                    insulinAmount: insulin,
-                    insulinType: nil,
-                    nightScoutId: "watch-ins-\(UUID().uuidString)",
-                    sourceInfo: "Apple Watch HealthKit"
+                let startW = ts.addingTimeInterval(-180)
+                let endW = ts.addingTimeInterval(180)
+                let nearbyFetch = FetchDescriptor<NightScoutInsulinCache>(
+                    predicate: #Predicate<NightScoutInsulinCache> { cache in
+                        cache.timestamp >= startW && cache.timestamp <= endW
+                    }
                 )
-                context.insert(ins)
-                print("💉 Stored Watch insulin with trusted timestamp: \(String(format: "%.2f", insulin)) U at \(ts.formatted()))")
+                let nearby = try? context.fetch(nearbyFetch)
+                let isDuplicate = (nearby ?? []).contains { abs($0.insulinAmount - insulin) <= 0.05 }
+                if isDuplicate {
+                    print("↩️ Skipped Watch insulin (duplicate within 3 min & 0.05U): \(String(format: "%.2f", insulin)) at \(ts.formatted())")
+                } else {
+                    let ins = NightScoutInsulinCache(
+                        timestamp: ts,
+                        insulinAmount: insulin,
+                        insulinType: nil,
+                        nightScoutId: "watch-ins-\(Int(ts.timeIntervalSince1970))-\(Int((insulin*100).rounded()))",
+                        sourceInfo: "Apple Watch HealthKit"
+                    )
+                    ins.updateDecayedAmount()
+                    context.insert(ins)
+                    print("💉 Stored Watch insulin with trusted timestamp: \(String(format: "%.2f", insulin)) U at \(ts.formatted()))")
+                }
             } else if insulin > 0.1 {
                 print("⏭️ Skipping Watch insulin cache: missing trusted timestamp (dose=\(String(format: "%.2f", insulin)))")
             }
             
-            // Cache carbs if trusted timestamp is available
+            // Cache carbs if trusted timestamp is available (dedupe by time±3m & amount tolerance)
             if carbs > 1.0, let ts = carbTimestamp {
-                let carb = NightScoutCarbCache(
-                    timestamp: ts,
-                    carbAmount: carbs,
-                    carbType: nil,
-                    nightScoutId: "watch-carb-\(UUID().uuidString)",
-                    sourceInfo: "Apple Watch HealthKit"
+                let startW = ts.addingTimeInterval(-180)
+                let endW = ts.addingTimeInterval(180)
+                let nearbyFetch = FetchDescriptor<NightScoutCarbCache>(
+                    predicate: #Predicate<NightScoutCarbCache> { cache in
+                        cache.timestamp >= startW && cache.timestamp <= endW
+                    }
                 )
-                context.insert(carb)
-                print("🍞 Stored Watch carbs with trusted timestamp: \(String(format: "%.1f", carbs)) g at \(ts.formatted()))")
+                let nearby = try? context.fetch(nearbyFetch)
+                let isDuplicate = (nearby ?? []).contains { abs($0.carbAmount - carbs) <= 0.5 }
+                if isDuplicate {
+                    print("↩️ Skipped Watch carbs (duplicate within 3 min & 0.5g): \(String(format: "%.1f", carbs)) at \(ts.formatted())")
+                } else {
+                    let carb = NightScoutCarbCache(
+                        timestamp: ts,
+                        carbAmount: carbs,
+                        carbType: nil,
+                        nightScoutId: "watch-carb-\(Int(ts.timeIntervalSince1970))-\(Int((carbs*10).rounded()))",
+                        sourceInfo: "Apple Watch HealthKit"
+                    )
+                    carb.updateDecayedAmount()
+                    context.insert(carb)
+                    print("🍞 Stored Watch carbs with trusted timestamp: \(String(format: "%.1f", carbs)) g at \(ts.formatted()))")
+                }
             } else if carbs > 1.0 {
                 print("⏭️ Skipping Watch carb cache: missing trusted timestamp (carbs=\(String(format: "%.1f", carbs)))")
             }
@@ -818,6 +846,31 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
                 print("🩸 Stored Watch glucose: \(String(format: "%.0f", glucose)) mg/dL (trend: \(String(format: "%.2f", trend)))")
             }
             
+            // Prune expired cache entries before saving
+            do {
+                let pruneInsulinCutoff = Date().addingTimeInterval(-4 * 3600)
+                let pruneCarbCutoff = Date().addingTimeInterval(-5 * 3600)
+                let oldInsulinFetch = FetchDescriptor<NightScoutInsulinCache>(
+                    predicate: #Predicate<NightScoutInsulinCache> { cache in
+                        cache.timestamp < pruneInsulinCutoff
+                    }
+                )
+                let oldCarbFetch = FetchDescriptor<NightScoutCarbCache>(
+                    predicate: #Predicate<NightScoutCarbCache> { cache in
+                        cache.timestamp < pruneCarbCutoff
+                    }
+                )
+                let oldInsulin = try context.fetch(oldInsulinFetch)
+                let oldCarbs = try context.fetch(oldCarbFetch)
+                for item in oldInsulin { context.delete(item) }
+                for item in oldCarbs { context.delete(item) }
+                if !oldInsulin.isEmpty || !oldCarbs.isEmpty {
+                    print("🧹 Pruned expired cache entries (watch store): insulin=\(oldInsulin.count), carbs=\(oldCarbs.count)")
+                }
+            } catch {
+                print("⚠️ Failed pruning expired cache entries (watch store): \(error.localizedDescription)")
+            }
+
             // Save all Watch data to SwiftData
             try context.save()
             print("✅ Watch health data successfully stored for background prediction use")

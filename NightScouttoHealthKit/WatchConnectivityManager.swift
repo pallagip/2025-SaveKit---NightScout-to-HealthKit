@@ -380,10 +380,14 @@ extension WatchConnectivityManager: WCSessionDelegate {
             print("💉 Caching HealthKit insulin data to SwiftData...")
             
             do {
-                // Fetch insulin from HealthKit (last 4 hours)
+                // Fetch insulin from HealthKit (last 4 hours, bolus only)
                 let insulinType = HKQuantityType.quantityType(forIdentifier: .insulinDelivery)!
                 let fourHoursAgo = Date().addingTimeInterval(-4 * 3600)
-                let predicate = HKQuery.predicateForSamples(withStart: fourHoursAgo, end: Date(), options: .strictStartDate)
+                let timePredicate = HKQuery.predicateForSamples(withStart: fourHoursAgo, end: Date(), options: .strictStartDate)
+                let reasonPred = HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeyInsulinDeliveryReason,
+                                                             operatorType: .equalTo,
+                                                             value: NSNumber(value: HKInsulinDeliveryReason.bolus.rawValue))
+                let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [timePredicate, reasonPred])
                 
                 let insulinSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
                     let query = HKSampleQuery(sampleType: insulinType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
@@ -482,6 +486,32 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 print("⚠️ Failed to cache HealthKit carbs: \(error.localizedDescription)")
             }
             
+            // Prune expired cache entries before saving
+            do {
+                let pruneInsulinCutoff = Date().addingTimeInterval(-4 * 3600)
+                let pruneCarbCutoff = Date().addingTimeInterval(-5 * 3600)
+
+                let oldInsulinFetch = FetchDescriptor<NightScoutInsulinCache>(
+                    predicate: #Predicate<NightScoutInsulinCache> { cache in
+                        cache.timestamp < pruneInsulinCutoff
+                    }
+                )
+                let oldCarbFetch = FetchDescriptor<NightScoutCarbCache>(
+                    predicate: #Predicate<NightScoutCarbCache> { cache in
+                        cache.timestamp < pruneCarbCutoff
+                    }
+                )
+                let oldInsulin = try modelContext.fetch(oldInsulinFetch)
+                let oldCarbs = try modelContext.fetch(oldCarbFetch)
+                for item in oldInsulin { modelContext.delete(item) }
+                for item in oldCarbs { modelContext.delete(item) }
+                if !oldInsulin.isEmpty || !oldCarbs.isEmpty {
+                    print("🧹 Pruned expired cache entries: insulin=\(oldInsulin.count), carbs=\(oldCarbs.count)")
+                }
+            } catch {
+                print("⚠️ Failed pruning expired cache entries: \(error.localizedDescription)")
+            }
+
             // Save all changes
             do {
                 try modelContext.save()
@@ -527,34 +557,62 @@ extension WatchConnectivityManager: WCSessionDelegate {
             let context = ModelContext(modelContainer)
             let currentTime = Date()
             
-            // Cache Watch insulin only if we have a trusted timestamp
+            // Cache Watch insulin only if we have a trusted timestamp (dedupe by time+amount proximity)
             if watchInsulin > 0.1, let ts = watchInsulinTimestamp {
-                let entry = NightScoutInsulinCache(
-                    timestamp: ts,
-                    insulinAmount: watchInsulin,
-                    insulinType: nil,
-                    nightScoutId: "watch-ins-\(UUID().uuidString)",
-                    sourceInfo: "Apple Watch HealthKit"
+                let startW = ts.addingTimeInterval(-180) // 3 minutes
+                let endW = ts.addingTimeInterval(180)
+                let nearbyFetch = FetchDescriptor<NightScoutInsulinCache>(
+                    predicate: #Predicate<NightScoutInsulinCache> { cache in
+                        cache.timestamp >= startW && cache.timestamp <= endW
+                    }
                 )
-                context.insert(entry)
-                print("💉 Cached Watch insulin with trusted timestamp: dose=\(String(format: "%.2f", watchInsulin)) at \(ts.formatted())")
-                watchDataIntegrated = true
+                let nearby = try? context.fetch(nearbyFetch)
+                let isDuplicate = (nearby ?? []).contains { abs($0.insulinAmount - watchInsulin) <= 0.05 }
+                if isDuplicate {
+                    print("↩️ Skipped Watch insulin (duplicate within 3 min & 0.05U): \(String(format: "%.2f", watchInsulin)) at \(ts.formatted())")
+                } else {
+                    let entry = NightScoutInsulinCache(
+                        timestamp: ts,
+                        insulinAmount: watchInsulin,
+                        insulinType: nil,
+                        nightScoutId: "watch-ins-\(Int(ts.timeIntervalSince1970))-\(Int((watchInsulin*100).rounded()))",
+                        sourceInfo: "Apple Watch HealthKit"
+                    )
+                    entry.updateDecayedAmount()
+                    context.insert(entry)
+                    print("💉 Cached Watch insulin with trusted timestamp: dose=\(String(format: "%.2f", watchInsulin)) at \(ts.formatted())")
+                    watchDataIntegrated = true
+                }
             } else if watchInsulin > 0.1 {
                 print("⏭️ Skipping Watch insulin cache: missing trusted timestamp (dose=\(String(format: "%.2f", watchInsulin)))")
             }
             
-            // Cache Watch carbs only if we have a trusted timestamp
+            // Cache Watch carbs only if we have a trusted timestamp (dedupe by time+amount proximity)
             if watchCarbs > 1.0, let ts = watchCarbTimestamp {
-                let entry = NightScoutCarbCache(
-                    timestamp: ts,
-                    carbAmount: watchCarbs,
-                    carbType: nil,
-                    nightScoutId: "watch-carb-\(UUID().uuidString)",
-                    sourceInfo: "Apple Watch HealthKit"
+                let startW = ts.addingTimeInterval(-180) // 3 minutes
+                let endW = ts.addingTimeInterval(180)
+                let nearbyFetch = FetchDescriptor<NightScoutCarbCache>(
+                    predicate: #Predicate<NightScoutCarbCache> { cache in
+                        cache.timestamp >= startW && cache.timestamp <= endW
+                    }
                 )
-                context.insert(entry)
-                print("🍞 Cached Watch carbs with trusted timestamp: carbs=\(String(format: "%.1f", watchCarbs)) at \(ts.formatted())")
-                watchDataIntegrated = true
+                let nearby = try? context.fetch(nearbyFetch)
+                let isDuplicate = (nearby ?? []).contains { abs($0.carbAmount - watchCarbs) <= 0.5 }
+                if isDuplicate {
+                    print("↩️ Skipped Watch carbs (duplicate within 3 min & 0.5g): \(String(format: "%.1f", watchCarbs)) at \(ts.formatted())")
+                } else {
+                    let entry = NightScoutCarbCache(
+                        timestamp: ts,
+                        carbAmount: watchCarbs,
+                        carbType: nil,
+                        nightScoutId: "watch-carb-\(Int(ts.timeIntervalSince1970))-\(Int((watchCarbs*10).rounded()))",
+                        sourceInfo: "Apple Watch HealthKit"
+                    )
+                    entry.updateDecayedAmount()
+                    context.insert(entry)
+                    print("🍞 Cached Watch carbs with trusted timestamp: carbs=\(String(format: "%.1f", watchCarbs)) at \(ts.formatted())")
+                    watchDataIntegrated = true
+                }
             } else if watchCarbs > 1.0 {
                 print("⏭️ Skipping Watch carb cache: missing trusted timestamp (carbs=\(String(format: "%.1f", watchCarbs)))")
             }
@@ -572,6 +630,31 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 watchDataIntegrated = true
             }
             
+            // Prune expired cache entries before saving
+            do {
+                let pruneInsulinCutoff = Date().addingTimeInterval(-4 * 3600)
+                let pruneCarbCutoff = Date().addingTimeInterval(-5 * 3600)
+                let oldInsulinFetch = FetchDescriptor<NightScoutInsulinCache>(
+                    predicate: #Predicate<NightScoutInsulinCache> { cache in
+                        cache.timestamp < pruneInsulinCutoff
+                    }
+                )
+                let oldCarbFetch = FetchDescriptor<NightScoutCarbCache>(
+                    predicate: #Predicate<NightScoutCarbCache> { cache in
+                        cache.timestamp < pruneCarbCutoff
+                    }
+                )
+                let oldInsulin = try context.fetch(oldInsulinFetch)
+                let oldCarbs = try context.fetch(oldCarbFetch)
+                for item in oldInsulin { context.delete(item) }
+                for item in oldCarbs { context.delete(item) }
+                if !oldInsulin.isEmpty || !oldCarbs.isEmpty {
+                    print("🧹 Pruned expired cache entries (watch sync): insulin=\(oldInsulin.count), carbs=\(oldCarbs.count)")
+                }
+            } catch {
+                print("⚠️ Failed pruning expired cache entries (watch sync): \(error.localizedDescription)")
+            }
+
             // Save integrated Watch data
             if watchDataIntegrated {
                 do {
@@ -628,10 +711,14 @@ extension WatchConnectivityManager: WCSessionDelegate {
             
                 print("📱 App is active - fetching HealthKit insulin data")
                 do {
-                    // Fetch insulin from HealthKit (last 4 hours)
+                    // Fetch insulin from HealthKit (last 4 hours, bolus only)
                     let insulinType = HKQuantityType.quantityType(forIdentifier: .insulinDelivery)!
                     let fourHoursAgo = Date().addingTimeInterval(-4 * 3600)
-                    let predicate = HKQuery.predicateForSamples(withStart: fourHoursAgo, end: Date(), options: .strictStartDate)
+                    let timePredicate = HKQuery.predicateForSamples(withStart: fourHoursAgo, end: Date(), options: .strictStartDate)
+                    let reasonPred = HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeyInsulinDeliveryReason,
+                                                                 operatorType: .equalTo,
+                                                                 value: NSNumber(value: HKInsulinDeliveryReason.bolus.rawValue))
+                    let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [timePredicate, reasonPred])
                 
                 let insulinSamples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
                     let query = HKSampleQuery(sampleType: insulinType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
@@ -735,6 +822,32 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 print("📱 App is backgrounded - skipping HealthKit carb fetch to prevent hanging")
             }
             
+            // Prune expired cache entries before saving
+            do {
+                let pruneInsulinCutoff = Date().addingTimeInterval(-4 * 3600)
+                let pruneCarbCutoff = Date().addingTimeInterval(-5 * 3600)
+
+                let oldInsulinFetch = FetchDescriptor<NightScoutInsulinCache>(
+                    predicate: #Predicate<NightScoutInsulinCache> { cache in
+                        cache.timestamp < pruneInsulinCutoff
+                    }
+                )
+                let oldCarbFetch = FetchDescriptor<NightScoutCarbCache>(
+                    predicate: #Predicate<NightScoutCarbCache> { cache in
+                        cache.timestamp < pruneCarbCutoff
+                    }
+                )
+                let oldInsulin = try modelContext.fetch(oldInsulinFetch)
+                let oldCarbs = try modelContext.fetch(oldCarbFetch)
+                for item in oldInsulin { modelContext.delete(item) }
+                for item in oldCarbs { modelContext.delete(item) }
+                if !oldInsulin.isEmpty || !oldCarbs.isEmpty {
+                    print("🧹 Pruned expired cache entries (comprehensive sync): insulin=\(oldInsulin.count), carbs=\(oldCarbs.count)")
+                }
+            } catch {
+                print("⚠️ Failed pruning expired cache entries (comprehensive sync): \(error.localizedDescription)")
+            }
+
             // Save all changes
             do {
                 try modelContext.save()

@@ -28,17 +28,21 @@ final class NightScoutInsulinCache {
     func updateDecayedAmount(currentTime: Date = Date()) {
         let hoursElapsed = currentTime.timeIntervalSince(timestamp) / 3600.0
         
-        // Standard insulin decay: exponential decay with 4-hour half-life
-        // Similar to what's used in HealthKitFeatureProvider
-        let decayConstant = 0.1733 // ln(2) / 4 hours
-        self.decayedAmount = max(0.0, insulinAmount * exp(-decayConstant * hoursElapsed))
+        // Normalized insulin decay: exponential chosen so remaining ~1% at 4h cutoff
+        // k = ln(1/epsilon) / windowHours, with epsilon = 0.01 and windowHours = 4
+        let windowHours = 4.0
+        let epsilon = 0.01
+        let decayConstant = log(1.0 / epsilon) / windowHours
+        self.decayedAmount = max(0.0, insulinAmount * exp(-decayConstant * max(0.0, hoursElapsed)))
     }
     
     // Get decayed amount without updating stored value
     func getDecayedAmount(currentTime: Date = Date()) -> Double {
         let hoursElapsed = currentTime.timeIntervalSince(timestamp) / 3600.0
-        let decayConstant = 0.1733 // ln(2) / 4 hours
-        return max(0.0, insulinAmount * exp(-decayConstant * hoursElapsed))
+        let windowHours = 4.0
+        let epsilon = 0.01
+        let decayConstant = log(1.0 / epsilon) / windowHours
+        return max(0.0, insulinAmount * exp(-decayConstant * max(0.0, hoursElapsed)))
     }
     
     // Check if insulin is still active (within 4 hours and has decayed amount > 0.01)

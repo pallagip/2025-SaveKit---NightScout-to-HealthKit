@@ -805,23 +805,56 @@ final class HealthKitFeatureProvider: ObservableObject {
             sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
         if let insulinCaches = try? modelContext.fetch(insulinFetch) {
-            var seen = Set<String>()
-            var considered = 0
             let total = insulinCaches.count
-            for cache in insulinCaches {
-                // Deduplicate by (nightScoutId, timestamp)
-                let key = "\(cache.nightScoutId)|\(cache.timestamp.timeIntervalSince1970)"
-                if seen.contains(key) { continue }
-                seen.insert(key)
+            let latestTS = insulinCaches.first?.timestamp
+            let earliestTS = insulinCaches.last?.timestamp
 
+            var seenKey = Set<String>()
+            var accepted: [(Date, Double)] = [] // (timestamp, amount)
+            var considered = 0
+            var dupById = 0
+            var dupByProx = 0
+            var rawSum: Double = 0.0
+            var details: [String] = []
+
+            for cache in insulinCaches {
                 // Guard against out-of-window or future entries (belt-and-suspenders)
                 if cache.timestamp < insulinCutoff || cache.timestamp > refNow { continue }
                 if !cache.isActive(currentTime: refNow) { continue }
 
+                // Deduplicate by (nightScoutId, exact timestamp)
+                let key = "\(cache.nightScoutId)|\(cache.timestamp.timeIntervalSince1970)"
+                if seenKey.contains(key) { dupById += 1; continue }
+
+                // Proximity dedupe: within ±3 min and amount within 0.05U
+                let isNearDup = accepted.contains { (ts, amt) in
+                    abs(ts.timeIntervalSince(cache.timestamp)) <= 180 && abs(amt - cache.insulinAmount) <= 0.05
+                }
+                if isNearDup { dupByProx += 1; continue }
+
+                // Accept this entry
+                seenKey.insert(key)
+                accepted.append((cache.timestamp, cache.insulinAmount))
+
                 let decayed = cache.getDecayedAmount(currentTime: refNow)
-                if decayed > 0 { activeInsulin += decayed; considered += 1 }
+                rawSum += cache.insulinAmount
+                if decayed > 0 {
+                    activeInsulin += decayed
+                    considered += 1
+                    if details.count < 12 {
+                        let hrs = refNow.timeIntervalSince(cache.timestamp) / 3600.0
+                        details.append(String(format: " • %@  amt=%.2fU  age=%.2fh  dec=%.2fU", cache.timestamp.formatted(), cache.insulinAmount, hrs, decayed))
+                    }
+                }
             }
-            print("🧮 IOB cache: used \(considered)/\(total) entries, raw=\(String(format: "%.2f", activeInsulin)) U (window: 4h)")
+
+            let tsRange = {
+                if let e = earliestTS, let l = latestTS { return "\(e.formatted()) .. \(l.formatted())" } else { return "n/a" }
+            }()
+            print("🧮 IOB cache: now=\(refNow.formatted()) used \(considered)/\(total) entries, dupId=\(dupById), dupProx=\(dupByProx), rawDec=\(String(format: "%.2f", activeInsulin)) U, rawSum=\(String(format: "%.2f", rawSum)) U, range: \(tsRange) (window: 4h)")
+            if activeInsulin > 20.0 {
+                for d in details { print(d) }
+            }
         }
 
         // Fetch carb cache entries within [cutoff, now]
@@ -832,23 +865,56 @@ final class HealthKitFeatureProvider: ObservableObject {
             sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
         if let carbCaches = try? modelContext.fetch(carbFetch) {
-            var seen = Set<String>()
-            var considered = 0
             let total = carbCaches.count
-            for cache in carbCaches {
-                // Deduplicate by (nightScoutId, timestamp)
-                let key = "\(cache.nightScoutId)|\(cache.timestamp.timeIntervalSince1970)"
-                if seen.contains(key) { continue }
-                seen.insert(key)
+            let latestTS = carbCaches.first?.timestamp
+            let earliestTS = carbCaches.last?.timestamp
 
+            var seenKey = Set<String>()
+            var accepted: [(Date, Double)] = [] // (timestamp, amount)
+            var considered = 0
+            var dupById = 0
+            var dupByProx = 0
+            var rawSum: Double = 0.0
+            var details: [String] = []
+
+            for cache in carbCaches {
                 // Guard against out-of-window or future entries
                 if cache.timestamp < carbCutoff || cache.timestamp > refNow { continue }
                 if !cache.isActive(currentTime: refNow) { continue }
 
+                // Deduplicate by (nightScoutId, exact timestamp)
+                let key = "\(cache.nightScoutId)|\(cache.timestamp.timeIntervalSince1970)"
+                if seenKey.contains(key) { dupById += 1; continue }
+
+                // Proximity dedupe: within ±3 min and amount within 0.5 g
+                let isNearDup = accepted.contains { (ts, amt) in
+                    abs(ts.timeIntervalSince(cache.timestamp)) <= 180 && abs(amt - cache.carbAmount) <= 0.5
+                }
+                if isNearDup { dupByProx += 1; continue }
+
+                // Accept this entry
+                seenKey.insert(key)
+                accepted.append((cache.timestamp, cache.carbAmount))
+
                 let decayed = cache.getDecayedAmount(currentTime: refNow)
-                if decayed > 0 { activeCarbs += decayed; considered += 1 }
+                rawSum += cache.carbAmount
+                if decayed > 0 {
+                    activeCarbs += decayed
+                    considered += 1
+                    if details.count < 12 {
+                        let hrs = refNow.timeIntervalSince(cache.timestamp) / 3600.0
+                        details.append(String(format: " • %@  amt=%.1fg  age=%.2fh  dec=%.1fg", cache.timestamp.formatted(), cache.carbAmount, hrs, decayed))
+                    }
+                }
             }
-            print("🧮 COB cache: used \(considered)/\(total) entries, raw=\(String(format: "%.1f", activeCarbs)) g (window: 5h)")
+
+            let tsRange = {
+                if let e = earliestTS, let l = latestTS { return "\(e.formatted()) .. \(l.formatted())" } else { return "n/a" }
+            }()
+            print("🧮 COB cache: now=\(refNow.formatted()) used \(considered)/\(total) entries, dupId=\(dupById), dupProx=\(dupByProx), rawDec=\(String(format: "%.1f", activeCarbs)) g, rawSum=\(String(format: "%.1f", rawSum)) g, range: \(tsRange) (window: 5h)")
+            if activeCarbs > 120.0 {
+                for d in details { print(d) }
+            }
         }
 
         // Clamp to realistic maxima to avoid runaway values from any anomalies

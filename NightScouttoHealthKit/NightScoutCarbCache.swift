@@ -28,17 +28,21 @@ final class NightScoutCarbCache {
     func updateDecayedAmount(currentTime: Date = Date()) {
         let hoursElapsed = currentTime.timeIntervalSince(timestamp) / 3600.0
         
-        // Standard carb decay: exponential decay with 5-hour active window
-        // Similar to what's used in HealthKitFeatureProvider
-        let decayConstant = 0.1386 // ln(2) / 5 hours
-        self.decayedAmount = max(0.0, carbAmount * exp(-decayConstant * hoursElapsed))
+        // Normalized carb decay: exponential chosen so remaining ~1% at 5h cutoff
+        // k = ln(1/epsilon) / windowHours, with epsilon = 0.01 and windowHours = 5
+        let windowHours = 5.0
+        let epsilon = 0.01
+        let decayConstant = log(1.0 / epsilon) / windowHours
+        self.decayedAmount = max(0.0, carbAmount * exp(-decayConstant * max(0.0, hoursElapsed)))
     }
     
     // Get decayed amount without updating stored value
     func getDecayedAmount(currentTime: Date = Date()) -> Double {
         let hoursElapsed = currentTime.timeIntervalSince(timestamp) / 3600.0
-        let decayConstant = 0.1386 // ln(2) / 5 hours
-        return max(0.0, carbAmount * exp(-decayConstant * hoursElapsed))
+        let windowHours = 5.0
+        let epsilon = 0.01
+        let decayConstant = log(1.0 / epsilon) / windowHours
+        return max(0.0, carbAmount * exp(-decayConstant * max(0.0, hoursElapsed)))
     }
     
     // Check if carbs are still active (within 5 hours and has decayed amount > 0.1)
