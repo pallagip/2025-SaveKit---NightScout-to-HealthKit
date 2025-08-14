@@ -791,35 +791,73 @@ final class HealthKitFeatureProvider: ObservableObject {
     static func calculateActiveIOBandCOBFromCaches(modelContext: ModelContext, now: Date = Date()) -> (Double, Double) {
         var activeInsulin: Double = 0.0
         var activeCarbs: Double = 0.0
-        
-        // Calculate cutoff dates outside predicates to avoid SwiftData limitations
-        let insulinCutoff = now.addingTimeInterval(-4 * 3600) // 4 hours ago
-        let carbCutoff = now.addingTimeInterval(-5 * 3600) // 5 hours ago
-        
-        // Fetch insulin cache entries within 4 hours (active window)
+
+        // Normalize reference time and compute strict cutoffs
+        let refNow = now
+        let insulinCutoff = refNow.addingTimeInterval(-4 * 3600) // 4 hours ago
+        let carbCutoff = refNow.addingTimeInterval(-5 * 3600)    // 5 hours ago
+
+        // Fetch insulin cache entries within [cutoff, now]
         let insulinFetch = FetchDescriptor<NightScoutInsulinCache>(
             predicate: #Predicate<NightScoutInsulinCache> { cache in
-                cache.timestamp >= insulinCutoff
-            }
+                cache.timestamp >= insulinCutoff && cache.timestamp <= refNow
+            },
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
         if let insulinCaches = try? modelContext.fetch(insulinFetch) {
+            var seen = Set<String>()
+            var considered = 0
+            let total = insulinCaches.count
             for cache in insulinCaches {
-                activeInsulin += cache.getDecayedAmount(currentTime: now)
+                // Deduplicate by (nightScoutId, timestamp)
+                let key = "\(cache.nightScoutId)|\(cache.timestamp.timeIntervalSince1970)"
+                if seen.contains(key) { continue }
+                seen.insert(key)
+
+                // Guard against out-of-window or future entries (belt-and-suspenders)
+                if cache.timestamp < insulinCutoff || cache.timestamp > refNow { continue }
+                if !cache.isActive(currentTime: refNow) { continue }
+
+                let decayed = cache.getDecayedAmount(currentTime: refNow)
+                if decayed > 0 { activeInsulin += decayed; considered += 1 }
             }
+            print("🧮 IOB cache: used \(considered)/\(total) entries, raw=\(String(format: "%.2f", activeInsulin)) U (window: 4h)")
         }
-        
-        // Fetch carb cache entries within 5 hours (active window)
+
+        // Fetch carb cache entries within [cutoff, now]
         let carbFetch = FetchDescriptor<NightScoutCarbCache>(
             predicate: #Predicate<NightScoutCarbCache> { cache in
-                cache.timestamp >= carbCutoff
-            }
+                cache.timestamp >= carbCutoff && cache.timestamp <= refNow
+            },
+            sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
         )
         if let carbCaches = try? modelContext.fetch(carbFetch) {
+            var seen = Set<String>()
+            var considered = 0
+            let total = carbCaches.count
             for cache in carbCaches {
-                activeCarbs += cache.getDecayedAmount(currentTime: now)
+                // Deduplicate by (nightScoutId, timestamp)
+                let key = "\(cache.nightScoutId)|\(cache.timestamp.timeIntervalSince1970)"
+                if seen.contains(key) { continue }
+                seen.insert(key)
+
+                // Guard against out-of-window or future entries
+                if cache.timestamp < carbCutoff || cache.timestamp > refNow { continue }
+                if !cache.isActive(currentTime: refNow) { continue }
+
+                let decayed = cache.getDecayedAmount(currentTime: refNow)
+                if decayed > 0 { activeCarbs += decayed; considered += 1 }
             }
+            print("🧮 COB cache: used \(considered)/\(total) entries, raw=\(String(format: "%.1f", activeCarbs)) g (window: 5h)")
         }
-        
-        return (activeInsulin, activeCarbs)
+
+        // Clamp to realistic maxima to avoid runaway values from any anomalies
+        let clampedIOB = min(max(activeInsulin, 0.0), 25.0)
+        let clampedCOB = min(max(activeCarbs, 0.0), 200.0)
+        if activeInsulin != clampedIOB || activeCarbs != clampedCOB {
+            print("⚖️ Clamped cache totals -> IOB: \(String(format: "%.2f", clampedIOB)) U, COB: \(String(format: "%.1f", clampedCOB)) g")
+        }
+
+        return (clampedIOB, clampedCOB)
     }
 }

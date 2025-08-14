@@ -11,6 +11,7 @@ class CSVExportManager {
     
     // MARK: - Constants
     private let mmolToMgdl: Double = 18.0
+    private let maxWorkoutAssociationMinutes: Double = 300.0 // 5 hours
     
     // MARK: - ISO-8601 formatter (Central European Time, no fractional seconds)
     private let timestampFormatter: ISO8601DateFormatter = {
@@ -115,13 +116,27 @@ class CSVExportManager {
             // Add workout timing data
             let workoutData = try await fetchWorkoutDataForPrediction(timestamp: prediction.timestamp, modelContext: modelContext)
             if let workout = workoutData {
-                let workoutType = workout.workoutType ?? ""
-                let workoutEndTimestamp = workout.lastWorkoutEndTime != nil ? timestampFormatter.string(from: workout.lastWorkoutEndTime!) : ""
-                let timeSinceWorkout = workout.timeDifferenceMinutes != nil ? String(format: "%.1f", workout.timeDifferenceMinutes!) : ""
-                let calories = workout.activeKilocalories != nil ? String(format: "%.1f", workout.activeKilocalories!) : ""
-                let duration = workout.workoutDurationMinutes != nil ? String(format: "%.1f", workout.workoutDurationMinutes!) : ""
-                
-                csvLine += ",\(workoutType),\(workoutEndTimestamp),\(timeSinceWorkout),\(calories),\(duration)"
+                // Enforce 5-hour (300 minutes) maximum association window
+                var withinWindow = false
+                if let minutes = workout.timeDifferenceMinutes {
+                    withinWindow = minutes >= 0 && minutes <= maxWorkoutAssociationMinutes
+                } else if let end = workout.lastWorkoutEndTime {
+                    let diffMinutes = abs(prediction.timestamp.timeIntervalSince(end)) / 60.0
+                    withinWindow = diffMinutes <= maxWorkoutAssociationMinutes
+                }
+
+                if withinWindow {
+                    let workoutType = workout.workoutType ?? ""
+                    let workoutEndTimestamp = workout.lastWorkoutEndTime != nil ? timestampFormatter.string(from: workout.lastWorkoutEndTime!) : ""
+                    let timeSinceWorkout = workout.timeDifferenceMinutes != nil ? String(format: "%.1f", workout.timeDifferenceMinutes!) : ""
+                    let calories = workout.activeKilocalories != nil ? String(format: "%.1f", workout.activeKilocalories!) : ""
+                    let duration = workout.workoutDurationMinutes != nil ? String(format: "%.1f", workout.workoutDurationMinutes!) : ""
+                    
+                    csvLine += ",\(workoutType),\(workoutEndTimestamp),\(timeSinceWorkout),\(calories),\(duration)"
+                } else {
+                    // Outside association window - leave workout columns empty
+                    csvLine += ",,,,,"
+                }
             } else {
                 // No workout data found - leave all cells empty
                 csvLine += ",,,,,"
