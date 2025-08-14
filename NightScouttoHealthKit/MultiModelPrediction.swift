@@ -114,6 +114,11 @@ final class MultiModelPrediction {
         if let lastCarbTimestamp = lastCarbTimestamp {
             // Calculate time difference in minutes
             self.timeSinceLastCarb_minutes = (predictionTimestamp.timeIntervalSince1970 - lastCarbTimestamp.timeIntervalSince1970) / 60.0
+            // Enforce 5-hour window for carbs: outside window -> treat as missing
+            if self.timeSinceLastCarb_minutes < 0 || self.timeSinceLastCarb_minutes > 5 * 60 {
+                self.timeSinceLastCarb_minutes = -1.0
+                self.lastCarbEntryTimestamp = nil
+            }
         } else {
             // No carb entry found
             self.timeSinceLastCarb_minutes = -1.0  // Use -1 to indicate no carb entry found
@@ -127,6 +132,11 @@ final class MultiModelPrediction {
         if let lastInsulinTimestamp = lastInsulinTimestamp {
             // Calculate time difference in minutes
             self.timeSinceLastInsulin_minutes = (predictionTimestamp.timeIntervalSince1970 - lastInsulinTimestamp.timeIntervalSince1970) / 60.0
+            // Enforce 4-hour window for insulin: outside window -> treat as missing
+            if self.timeSinceLastInsulin_minutes < 0 || self.timeSinceLastInsulin_minutes > 4 * 60 {
+                self.timeSinceLastInsulin_minutes = -1.0
+                self.lastInsulinEntryTimestamp = nil
+            }
         } else {
             // No insulin entry found
             self.timeSinceLastInsulin_minutes = -1.0  // Use -1 to indicate no insulin entry found

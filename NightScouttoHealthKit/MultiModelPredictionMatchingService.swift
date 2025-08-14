@@ -163,4 +163,63 @@ class MultiModelPredictionMatchingService {
         
         return try modelContext.fetch(descriptor)
     }
+
+    // MARK: - Backfill insulin/carb associations from SwiftData caches
+    /// Associates each prediction with the latest insulin/carb cache entry that occurred before it
+    /// within 4h (insulin) and 5h (carbs) windows. Useful to fix predictions created when HealthKit
+    /// was unavailable (e.g., background mode).
+    /// - Returns: Tuple counts of updated insulin and carb associations
+    @discardableResult
+    func backfillInsulinAndCarbAssociations(predictions: [MultiModelPrediction], modelContext: ModelContext) throws -> (updatedInsulin: Int, updatedCarb: Int) {
+        if predictions.isEmpty { return (0, 0) }
+        var insulinUpdated = 0
+        var carbUpdated = 0
+        
+        for prediction in predictions {
+            let pTime = prediction.timestamp
+            
+            // Backfill insulin (4h window) if missing/invalid
+            let needsInsulin = prediction.lastInsulinEntryTimestamp == nil ||
+                prediction.timeSinceLastInsulin_minutes < 0 ||
+                (prediction.lastInsulinEntryTimestamp != nil && pTime.timeIntervalSince(prediction.lastInsulinEntryTimestamp!) > 4 * 3600)
+            if needsInsulin {
+                let start = pTime.addingTimeInterval(-4 * 3600)
+                let fetch = FetchDescriptor<NightScoutInsulinCache>(
+                    predicate: #Predicate<NightScoutInsulinCache> { cache in
+                        cache.timestamp >= start && cache.timestamp <= pTime
+                    },
+                    sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+                )
+                if let found = try modelContext.fetch(fetch).first {
+                    prediction.setInsulinTiming(lastInsulinTimestamp: found.timestamp, predictionTimestamp: pTime)
+                    insulinUpdated += 1
+                } else {
+                    // Clear to indicate no valid insulin within 4h
+                    prediction.setInsulinTiming(lastInsulinTimestamp: nil, predictionTimestamp: pTime)
+                }
+            }
+            
+            // Backfill carbs (5h window) if missing/invalid
+            let needsCarb = prediction.lastCarbEntryTimestamp == nil ||
+                prediction.timeSinceLastCarb_minutes < 0 ||
+                (prediction.lastCarbEntryTimestamp != nil && pTime.timeIntervalSince(prediction.lastCarbEntryTimestamp!) > 5 * 3600)
+            if needsCarb {
+                let start = pTime.addingTimeInterval(-5 * 3600)
+                let fetch = FetchDescriptor<NightScoutCarbCache>(
+                    predicate: #Predicate<NightScoutCarbCache> { cache in
+                        cache.timestamp >= start && cache.timestamp <= pTime
+                    },
+                    sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+                )
+                if let found = try modelContext.fetch(fetch).first {
+                    prediction.setCarbTiming(lastCarbTimestamp: found.timestamp, predictionTimestamp: pTime)
+                    carbUpdated += 1
+                } else {
+                    // Clear to indicate no valid carbs within 5h
+                    prediction.setCarbTiming(lastCarbTimestamp: nil, predictionTimestamp: pTime)
+                }
+            }
+        }
+        return (insulinUpdated, carbUpdated)
+    }
 }

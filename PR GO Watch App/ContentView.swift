@@ -262,8 +262,8 @@ struct ContentView: View {
         // Get comprehensive health data from Watch for enhanced background prediction
         let healthData = healthKitManager.getComprehensiveHealthData()
         
-        // Send comprehensive message to iPhone to trigger enhanced GPU prediction
-        let message = [
+        // Build comprehensive message to iPhone to trigger enhanced GPU prediction
+        var message: [String: Any] = [
             "type": "trigger_gpu_prediction",
             "timestamp": Date().timeIntervalSince1970,
             "source": "watch_button_enhanced",
@@ -272,12 +272,18 @@ struct ContentView: View {
             "carb_amount": healthData.carbs,
             "glucose_value": healthData.glucose,
             "glucose_trend": healthData.glucoseTrend
-        ] as [String: Any]
+        ]
+        if let insTs = healthData.insulinTimestamp {
+            message["insulin_timestamp"] = insTs.timeIntervalSince1970
+        }
+        if let carbTs = healthData.carbTimestamp {
+            message["carb_timestamp"] = carbTs.timeIntervalSince1970
+        }
         
         print("🧠 Sending comprehensive health data to iPhone:")
         print("   ❤️ Heart Rate: \(healthData.heartRate) BPM")
-        print("   💉 Insulin: \(healthData.insulin) units")
-        print("   🍞 Carbs: \(healthData.carbs) grams")
+        print("   💉 Insulin: \(healthData.insulin) units (ts: \(healthData.insulinTimestamp?.formatted() ?? "nil"))")
+        print("   🍞 Carbs: \(healthData.carbs) grams (ts: \(healthData.carbTimestamp?.formatted() ?? "nil"))")
         print("   🩸 Glucose: \(healthData.glucose) mg/dL")
         print("   📈 Trend: \(String(format: "%.2f", healthData.glucoseTrend)) mg/dL/min")
         

@@ -821,26 +821,54 @@ struct SettingsView: View {
             
             // HealthKit BG Cache Sync button
             Button {
-                Task {
+                Task { @MainActor in
+                    viewModel.syncInProgress = true
                     do {
-                        viewModel.syncInProgress = true
-                        
-                        let syncedCount = try await HealthKitBGSyncService.shared.syncHealthKitBGToCache(
+                        // 1) Cache BG readings from HealthKit -> SwiftData (24h)
+                        let bgCount = try await HealthKitBGSyncService.shared.syncHealthKitBGToCache(
                             modelContext: modelContext,
                             hoursBack: 24.0
                         )
-                        
-                        if syncedCount > 0 {
-                            viewModel.lastSyncResult = "Successfully cached \(syncedCount) new BG readings from HealthKit"
-                        } else {
-                            viewModel.lastSyncResult = "No new HealthKit BG readings found to cache"
+
+                        // 2) Cache insulin and carbs from HealthKit -> SwiftData (foreground only)
+                        let icResult = await WatchConnectivityManager.shared.performHealthKitToSwiftDataSync()
+
+                        // 3) Backfill WorkoutTimeData for existing predictions so CSV can include workout info
+                        var workoutsAdded = 0
+                        for prediction in multiModelPredictions {
+                            // Check if a WorkoutTimeData exists within ±30 seconds of prediction timestamp
+                            let windowStart = prediction.timestamp.addingTimeInterval(-30)
+                            let windowEnd = prediction.timestamp.addingTimeInterval(30)
+                            let descriptor = FetchDescriptor<WorkoutTimeData>(
+                                predicate: #Predicate<WorkoutTimeData> { w in
+                                    w.predictionTimestamp >= windowStart && w.predictionTimestamp <= windowEnd
+                                }
+                            )
+                            let existing = try modelContext.fetch(descriptor)
+                            if existing.isEmpty {
+                                let workoutService = WorkoutTrackingService()
+                                _ = await workoutService.createWorkoutTimeRecord(
+                                    predictionTimestamp: prediction.timestamp,
+                                    modelContext: modelContext
+                                )
+                                workoutsAdded += 1
+                            }
                         }
-                        
+
+                        // 4) Backfill insulin/carb associations for predictions from SwiftData caches (4h insulin, 5h carbs)
+                        let matcher = MultiModelPredictionMatchingService()
+                        let assocResult = try matcher.backfillInsulinAndCarbAssociations(
+                            predictions: multiModelPredictions,
+                            modelContext: modelContext
+                        )
+                        try modelContext.save()
+
+                        viewModel.lastSyncResult = "Cached BG: \(bgCount), insulin: \(icResult.insulin), carbs: \(icResult.carbs), workouts added: \(workoutsAdded), associations updated — insulin: \(assocResult.updatedInsulin), carbs: \(assocResult.updatedCarb)"
                     } catch {
-                        print("⚠️ HealthKit BG sync failed: \(error)")
-                        viewModel.lastSyncResult = "HealthKit BG sync failed: \(error.localizedDescription)"
+                        print("⚠️ HealthKit caching failed: \(error)")
+                        viewModel.lastSyncResult = "HealthKit caching failed: \(error.localizedDescription)"
                     }
-                    
+
                     viewModel.syncInProgress = false
                 }
             } label: {
@@ -848,7 +876,7 @@ struct SettingsView: View {
                     ProgressView()
                         .progressViewStyle(CircularProgressViewStyle())
                 } else {
-                    Text("Cache HealthKit BG Data (\(cachedBGReadings.count) cached)")
+                    Text("Cache HealthKit Data")
                         .frame(maxWidth: .infinity)
                 }
             }

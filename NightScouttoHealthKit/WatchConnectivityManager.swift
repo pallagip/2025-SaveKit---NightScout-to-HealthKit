@@ -248,13 +248,22 @@ extension WatchConnectivityManager: WCSessionDelegate {
         let watchCarbs = message["carb_amount"] as? Double ?? 0.0
         let watchGlucose = message["glucose_value"] as? Double ?? 0.0
         let watchGlucoseTrend = message["glucose_trend"] as? Double ?? 0.0
+        // Optional trusted sample timestamps from Watch (seconds since 1970)
+        let insulinTimestamp: Date? = {
+            if let t = message["insulin_timestamp"] as? TimeInterval { return Date(timeIntervalSince1970: t) }
+            return nil
+        }()
+        let carbTimestamp: Date? = {
+            if let t = message["carb_timestamp"] as? TimeInterval { return Date(timeIntervalSince1970: t) }
+            return nil
+        }()
         let source = message["source"] as? String ?? "watch_button"
         
         print("🧠 === ENHANCED WATCH-TRIGGERED GPU PREDICTION ===")
         print("📊 Received comprehensive health data from Watch:")
         print("   ❤️ Heart Rate: \(heartRate) BPM")
-        print("   💉 Insulin: \(watchInsulin) units")
-        print("   🍞 Carbs: \(watchCarbs) grams")
+        print("   💉 Insulin: \(watchInsulin) units (ts: \(insulinTimestamp?.formatted() ?? "nil"))")
+        print("   🍞 Carbs: \(watchCarbs) grams (ts: \(carbTimestamp?.formatted() ?? "nil"))")
         print("   🩸 Glucose: \(watchGlucose) mg/dL")
         print("   📈 Trend: \(String(format: "%.2f", watchGlucoseTrend)) mg/dL/min")
         print("   📱 Source: \(source)")
@@ -283,7 +292,9 @@ extension WatchConnectivityManager: WCSessionDelegate {
             do {
                 syncResults = try await self.performEnhancedWatchDataSync(
                     watchInsulin: watchInsulin,
+                    watchInsulinTimestamp: insulinTimestamp,
                     watchCarbs: watchCarbs,
+                    watchCarbTimestamp: carbTimestamp,
                     watchGlucose: watchGlucose,
                     watchTrend: watchGlucoseTrend
                 )
@@ -297,7 +308,9 @@ extension WatchConnectivityManager: WCSessionDelegate {
             await BackgroundGPUWaveNetService.shared.triggerEnhancedWatchGPUPrediction(
                 heartRate: heartRate,
                 watchInsulin: watchInsulin,
-                watchCarbs: watchCarbs, 
+                watchInsulinTimestamp: insulinTimestamp,
+                watchCarbs: watchCarbs,
+                watchCarbTimestamp: carbTimestamp,
                 watchGlucose: watchGlucose,
                 watchTrend: watchGlucoseTrend
             )
@@ -495,7 +508,9 @@ extension WatchConnectivityManager: WCSessionDelegate {
     @MainActor
     private func performEnhancedWatchDataSync(
         watchInsulin: Double,
-        watchCarbs: Double, 
+        watchInsulinTimestamp: Date?,
+        watchCarbs: Double,
+        watchCarbTimestamp: Date?, 
         watchGlucose: Double,
         watchTrend: Double
     ) async -> (glucose: Int, insulin: Int, carbs: Int, watchDataIntegrated: Bool) {
@@ -512,32 +527,36 @@ extension WatchConnectivityManager: WCSessionDelegate {
             let context = ModelContext(modelContainer)
             let currentTime = Date()
             
-            // Integrate Watch insulin data if significant
-            if watchInsulin > 0.1 {
-                let watchInsulinEntry = NightScoutInsulinCache(
-                    timestamp: currentTime,
+            // Cache Watch insulin only if we have a trusted timestamp
+            if watchInsulin > 0.1, let ts = watchInsulinTimestamp {
+                let entry = NightScoutInsulinCache(
+                    timestamp: ts,
                     insulinAmount: watchInsulin,
-                    insulinType: "rapid",
-                    nightScoutId: "watch-\(UUID().uuidString)",
-                    sourceInfo: "Watch-Enhanced"
+                    insulinType: nil,
+                    nightScoutId: "watch-ins-\(UUID().uuidString)",
+                    sourceInfo: "Apple Watch HealthKit"
                 )
-                context.insert(watchInsulinEntry)
-                print("💉 Integrated Watch insulin: \(watchInsulin) units")
+                context.insert(entry)
+                print("💉 Cached Watch insulin with trusted timestamp: dose=\(String(format: "%.2f", watchInsulin)) at \(ts.formatted())")
                 watchDataIntegrated = true
+            } else if watchInsulin > 0.1 {
+                print("⏭️ Skipping Watch insulin cache: missing trusted timestamp (dose=\(String(format: "%.2f", watchInsulin)))")
             }
             
-            // Integrate Watch carb data if significant
-            if watchCarbs > 1.0 {
-                let watchCarbEntry = NightScoutCarbCache(
-                    timestamp: currentTime,
+            // Cache Watch carbs only if we have a trusted timestamp
+            if watchCarbs > 1.0, let ts = watchCarbTimestamp {
+                let entry = NightScoutCarbCache(
+                    timestamp: ts,
                     carbAmount: watchCarbs,
-                    carbType: "meal",
+                    carbType: nil,
                     nightScoutId: "watch-carb-\(UUID().uuidString)",
-                    sourceInfo: "Watch-Enhanced"
+                    sourceInfo: "Apple Watch HealthKit"
                 )
-                context.insert(watchCarbEntry)
-                print("🍞 Integrated Watch carbs: \(watchCarbs) grams")
+                context.insert(entry)
+                print("🍞 Cached Watch carbs with trusted timestamp: carbs=\(String(format: "%.1f", watchCarbs)) at \(ts.formatted())")
                 watchDataIntegrated = true
+            } else if watchCarbs > 1.0 {
+                print("⏭️ Skipping Watch carb cache: missing trusted timestamp (carbs=\(String(format: "%.1f", watchCarbs)))")
             }
             
             // Integrate Watch glucose data if significant and recent

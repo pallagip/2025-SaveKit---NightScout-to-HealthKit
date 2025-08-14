@@ -10,7 +10,9 @@ class HealthKitManager: ObservableObject {
     @Published var isAuthorized = false
     @Published var heartRate: Double = 0
     @Published var lastInsulinDose: Double = 0
+    @Published var lastInsulinTimestamp: Date? = nil
     @Published var lastCarbAmount: Double = 0
+    @Published var lastCarbTimestamp: Date? = nil
     @Published var lastGlucose: Double = 0
     @Published var glucoseTrend: Double = 0
 
@@ -157,6 +159,7 @@ class HealthKitManager: ObservableObject {
                 
                 let insulinUnit = HKUnit.internationalUnit()
                 self.lastInsulinDose = samples.first?.quantity.doubleValue(for: insulinUnit) ?? 0.0
+                self.lastInsulinTimestamp = samples.first?.startDate
                 
                 print("💉 Fetched Insulin: \(self.lastInsulinDose) units (\(samples.count) samples in 6h)")
                 completion()
@@ -202,6 +205,7 @@ class HealthKitManager: ObservableObject {
                 
                 let carbUnit = HKUnit.gram()
                 self.lastCarbAmount = samples.first?.quantity.doubleValue(for: carbUnit) ?? 0.0
+                self.lastCarbTimestamp = samples.first?.startDate
                 
                 print("🍞 Fetched Carbs: \(self.lastCarbAmount) grams (\(samples.count) samples in 4h)")
                 completion()
@@ -288,7 +292,17 @@ class HealthKitManager: ObservableObject {
     }
     
     // MARK: - Data Access Methods for Background Predictions
-    func getComprehensiveHealthData() -> (heartRate: Double, insulin: Double, carbs: Double, glucose: Double, glucoseTrend: Double) {
-        return (heartRate: heartRate, insulin: lastInsulinDose, carbs: lastCarbAmount, glucose: lastGlucose, glucoseTrend: glucoseTrend)
+    func getComprehensiveHealthData() -> (
+        heartRate: Double,
+        insulin: Double, insulinTimestamp: Date?,
+        carbs: Double, carbTimestamp: Date?,
+        glucose: Double, glucoseTrend: Double
+    ) {
+        return (
+            heartRate: heartRate,
+            insulin: lastInsulinDose, insulinTimestamp: lastInsulinTimestamp,
+            carbs: lastCarbAmount, carbTimestamp: lastCarbTimestamp,
+            glucose: lastGlucose, glucoseTrend: glucoseTrend
+        )
     }
 }

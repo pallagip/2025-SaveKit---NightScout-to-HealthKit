@@ -268,6 +268,60 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
                 heartRate: heartRate
             )
             
+            // Create MultiModelPrediction record mirroring GPU results for CSV export
+            let multiPrediction = MultiModelPrediction(
+                timestamp: timestamp,
+                currentBG_mmol: currentBG / 18.0,
+                predictionCount: predictionCount
+            )
+            // Populate individual model predictions in mmol/L
+            for (modelIndex, pred) in predictions {
+                multiPrediction.setPrediction(model: modelIndex, mmol: pred.modelOutput)
+            }
+            // Set the average prediction fields
+            multiPrediction.avg_pred_mmol = finalPredictionMgdl / 18.0
+            multiPrediction.avg_pred_mgdl = Int(round(finalPredictionMgdl))
+            // Set carb timing if available
+            do {
+                let lastCarbTimestamp = try await healthKitProvider.fetchLastCarbEntryTimestamp()
+                multiPrediction.setCarbTiming(lastCarbTimestamp: lastCarbTimestamp, predictionTimestamp: timestamp)
+            } catch {
+                multiPrediction.setCarbTiming(lastCarbTimestamp: nil, predictionTimestamp: timestamp)
+            }
+            // Fallback: use SwiftData carb cache (5h window) if HK provided none
+            if multiPrediction.timeSinceLastCarb_minutes < 0 {
+                let carbWindowStart = timestamp.addingTimeInterval(-5 * 3600)
+                let carbFetch = FetchDescriptor<NightScoutCarbCache>(
+                    predicate: #Predicate<NightScoutCarbCache> { cache in
+                        cache.timestamp >= carbWindowStart && cache.timestamp <= timestamp
+                    },
+                    sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+                )
+                if let results = try? context.fetch(carbFetch), let cache = results.first {
+                    multiPrediction.setCarbTiming(lastCarbTimestamp: cache.timestamp, predictionTimestamp: timestamp)
+                }
+            }
+            // Set insulin timing if available
+            do {
+                let lastInsulinTimestamp = try await healthKitProvider.fetchLastInsulinEntryTimestamp()
+                multiPrediction.setInsulinTiming(lastInsulinTimestamp: lastInsulinTimestamp, predictionTimestamp: timestamp)
+            } catch {
+                multiPrediction.setInsulinTiming(lastInsulinTimestamp: nil, predictionTimestamp: timestamp)
+            }
+            // Fallback: use SwiftData insulin cache (4h window) if HK provided none
+            if multiPrediction.timeSinceLastInsulin_minutes < 0 {
+                let insulinWindowStart = timestamp.addingTimeInterval(-4 * 3600)
+                let insulinFetch = FetchDescriptor<NightScoutInsulinCache>(
+                    predicate: #Predicate<NightScoutInsulinCache> { cache in
+                        cache.timestamp >= insulinWindowStart && cache.timestamp <= timestamp
+                    },
+                    sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+                )
+                if let results = try? context.fetch(insulinFetch), let cache = results.first {
+                    multiPrediction.setInsulinTiming(lastInsulinTimestamp: cache.timestamp, predictionTimestamp: timestamp)
+                }
+            }
+            
             // Save to SwiftData
             context.insert(averagePrediction)
             
@@ -275,6 +329,10 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
             for (modelIndex, prediction) in predictions {
                 context.insert(prediction)
             }
+            // Save MultiModelPrediction record used by SettingsView export
+            context.insert(multiPrediction)
+            
+            // Persist all records
             
             try context.save()
             
@@ -676,17 +734,21 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
     func triggerEnhancedWatchGPUPrediction(
         heartRate: Double,
         watchInsulin: Double,
+        watchInsulinTimestamp: Date?,
         watchCarbs: Double,
+        watchCarbTimestamp: Date?,
         watchGlucose: Double,
         watchTrend: Double
     ) async {
         print("🎯 Enhanced Watch GPU WaveNet prediction triggered")
-        print("⌚ Watch Data - HR: \(heartRate), Insulin: \(watchInsulin), Carbs: \(watchCarbs), Glucose: \(watchGlucose), Trend: \(watchTrend)")
+        print("⌚ Watch Data - HR: \(heartRate), Insulin: \(watchInsulin) (ts: \(watchInsulinTimestamp?.formatted() ?? "nil")), Carbs: \(watchCarbs) (ts: \(watchCarbTimestamp?.formatted() ?? "nil")), Glucose: \(watchGlucose), Trend: \(watchTrend)")
         
         // Store Watch data for background prediction use
         await storeWatchDataForBackgroundUse(
             insulin: watchInsulin,
+            insulinTimestamp: watchInsulinTimestamp,
             carbs: watchCarbs,
+            carbTimestamp: watchCarbTimestamp,
             glucose: watchGlucose,
             trend: watchTrend
         )
@@ -699,7 +761,9 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
     /// This ensures fresh data is available even when HealthKit is inaccessible
     private func storeWatchDataForBackgroundUse(
         insulin: Double,
+        insulinTimestamp: Date?,
         carbs: Double,
+        carbTimestamp: Date?,
         glucose: Double,
         trend: Double
     ) async {
@@ -712,33 +776,37 @@ class BackgroundGPUWaveNetService: NSObject, ObservableObject {
         let now = Date()
         
         do {
-            // Store Watch insulin data if significant
-            if insulin > 0.1 {
-                let watchInsulinEntry = NightScoutInsulinCache(
-                    timestamp: now,
+            // Cache insulin if trusted timestamp is available
+            if insulin > 0.1, let ts = insulinTimestamp {
+                let ins = NightScoutInsulinCache(
+                    timestamp: ts,
                     insulinAmount: insulin,
-                    insulinType: "Watch-Enhanced",
-                    nightScoutId: "watch-insulin-\(UUID().uuidString)",
+                    insulinType: nil,
+                    nightScoutId: "watch-ins-\(UUID().uuidString)",
                     sourceInfo: "Apple Watch HealthKit"
                 )
-                context.insert(watchInsulinEntry)
-                print("💉 Stored Watch insulin: \(String(format: "%.2f", insulin)) units")
+                context.insert(ins)
+                print("💉 Stored Watch insulin with trusted timestamp: \(String(format: "%.2f", insulin)) U at \(ts.formatted()))")
+            } else if insulin > 0.1 {
+                print("⏭️ Skipping Watch insulin cache: missing trusted timestamp (dose=\(String(format: "%.2f", insulin)))")
             }
             
-            // Store Watch carb data if significant
-            if carbs > 1.0 {
-                let watchCarbEntry = NightScoutCarbCache(
-                    timestamp: now,
+            // Cache carbs if trusted timestamp is available
+            if carbs > 1.0, let ts = carbTimestamp {
+                let carb = NightScoutCarbCache(
+                    timestamp: ts,
                     carbAmount: carbs,
-                    carbType: "Watch-Enhanced",
+                    carbType: nil,
                     nightScoutId: "watch-carb-\(UUID().uuidString)",
                     sourceInfo: "Apple Watch HealthKit"
                 )
-                context.insert(watchCarbEntry)
-                print("🍞 Stored Watch carbs: \(String(format: "%.1f", carbs)) grams")
+                context.insert(carb)
+                print("🍞 Stored Watch carbs with trusted timestamp: \(String(format: "%.1f", carbs)) g at \(ts.formatted()))")
+            } else if carbs > 1.0 {
+                print("⏭️ Skipping Watch carb cache: missing trusted timestamp (carbs=\(String(format: "%.1f", carbs)))")
             }
             
-            // Store Watch glucose data if valid and recent
+            // Store Watch glucose data if valid and recent (BG is time-sensitive to 'now' and used for current state)
             if glucose > 50.0 && glucose < 500.0 {
                 let watchBGEntry = HealthKitBGCache(
                     timestamp: now,

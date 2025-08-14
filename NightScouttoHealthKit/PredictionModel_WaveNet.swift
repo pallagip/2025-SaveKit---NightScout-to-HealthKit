@@ -552,6 +552,20 @@ final class SeriesPredictionService {
             print("⚠️ Failed to fetch last carb entry: \(error)")
             multiPrediction.setCarbTiming(lastCarbTimestamp: nil, predictionTimestamp: predictionTimestamp)
         }
+        // Fallback: use SwiftData carb cache (5h) if HK provided none
+        if multiPrediction.timeSinceLastCarb_minutes < 0, let context = modelContext {
+            let start = predictionTimestamp.addingTimeInterval(-5 * 3600)
+            let fetch = FetchDescriptor<NightScoutCarbCache>(
+                predicate: #Predicate<NightScoutCarbCache> { cache in
+                    cache.timestamp >= start && cache.timestamp <= predictionTimestamp
+                },
+                sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+            )
+            if let results = try? context.fetch(fetch), let cache = results.first {
+                multiPrediction.setCarbTiming(lastCarbTimestamp: cache.timestamp, predictionTimestamp: predictionTimestamp)
+                print("🍞 Fallback carb timestamp from cache: \(cache.timestamp)")
+            }
+        }
         
         // Fetch last insulin entry timestamp and calculate time difference
         do {
@@ -567,6 +581,20 @@ final class SeriesPredictionService {
         } catch {
             print("⚠️ Failed to fetch last insulin entry: \(error)")
             multiPrediction.setInsulinTiming(lastInsulinTimestamp: nil, predictionTimestamp: predictionTimestamp)
+        }
+        // Fallback: use SwiftData insulin cache (4h) if HK provided none
+        if multiPrediction.timeSinceLastInsulin_minutes < 0, let context = modelContext {
+            let start = predictionTimestamp.addingTimeInterval(-4 * 3600)
+            let fetch = FetchDescriptor<NightScoutInsulinCache>(
+                predicate: #Predicate<NightScoutInsulinCache> { cache in
+                    cache.timestamp >= start && cache.timestamp <= predictionTimestamp
+                },
+                sortBy: [SortDescriptor(\.timestamp, order: .reverse)]
+            )
+            if let results = try? context.fetch(fetch), let cache = results.first {
+                multiPrediction.setInsulinTiming(lastInsulinTimestamp: cache.timestamp, predictionTimestamp: predictionTimestamp)
+                print("💉 Fallback insulin timestamp from cache: \(cache.timestamp)")
+            }
         }
         
         var modelPredictions: [Int: Prediction] = [:]
