@@ -96,7 +96,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         OneSignal.Notifications.requestPermission({ accepted in
             print("📱 OneSignal notification permission: \(accepted ? "GRANTED" : "DENIED")")
             if accepted {
-                print("🔔 OneSignal notifications enabled - GPU WaveNet will trigger on all notifications")
+                print("🔔 OneSignal notifications enabled - no automatic GPU on notifications")
             }
         }, fallbackToSettings: true)
         
@@ -140,23 +140,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 print("📱 Notification ID: \(notification.notificationId ?? "unknown")")
                 print("📝 Title: \(notification.title ?? "No title")")
                 print("📄 Body: \(notification.body ?? "No body")")
-                print("🔥 TRIGGERING BACKGROUND GPU WAVENET PROCESSING")
-                
-                // Send OneSignal notification to Apple Watch
-                WatchConnectivityManager.shared.sendOneSignalNotificationToWatch(
-                    title: notification.title ?? "NightScout Notification",
-                    body: notification.body ?? "New notification received"
-                )
-                
-                // Trigger GPU WaveNet processing immediately
-                Task { @MainActor in
-                    await BackgroundGPUWaveNetService.shared.triggerManualGPUPrediction()
-                }
-                
-                // Show custom alert for GPU processing
-                DispatchQueue.main.async {
-                    self.appDelegate?.showGPUProcessingAlert(notification: notification)
-                }
+                print("🚫 No auto actions on foreground notification display")
                 
                 // Allow the notification to display normally
                 // Don't call event.preventDefault() so notification shows
@@ -177,22 +161,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 
                 print("🔔 === ONESIGNAL NOTIFICATION CLICKED ===")
                 print("📱 Clicked Notification ID: \(notification.notificationId ?? "unknown")")
-                print("🔥 TRIGGERING IMMEDIATE GPU WAVENET PROCESSING")
+                print("➡️ Opening app to ContentView (no auto GPU on tap)")
                 
-                // Send OneSignal notification to Apple Watch (for click events too)
-                WatchConnectivityManager.shared.sendOneSignalNotificationToWatch(
-                    title: notification.title ?? "NightScout Notification",
-                    body: notification.body ?? "Notification was tapped"
-                )
-                
-                // Trigger GPU WaveNet processing immediately
-                Task { @MainActor in
-                    await BackgroundGPUWaveNetService.shared.triggerManualGPUPrediction()
-                }
-                
-                // Show custom alert for GPU processing
-                DispatchQueue.main.async {
-                    self.appDelegate?.showGPUProcessingAlert(notification: notification)
+                // Do not trigger any prediction or show alerts on tap.
+                // Rely on iOS to bring the app to foreground, which shows ContentView by default.
+                // Optionally ensure main window is active.
+                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                   let window = windowScene.windows.first {
+                    window.makeKeyAndVisible()
                 }
             }
         }
@@ -243,7 +219,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         return true
     }
     
-
+    
     
     // MARK: - GPU Processing Alert
     private func showGPUProcessingAlert(notification: OSNotification) {
@@ -302,30 +278,46 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             let syncResults = await WatchConnectivityManager.shared.performHealthKitToSwiftDataSync()
             print("✅ Automatic HealthKit sync completed - Insulin: \(syncResults.insulin), Carbs: \(syncResults.carbs)")
         }
-    }
-    
-    // Handle background remote notifications
-    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable : Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        print("🔔 === BACKGROUND REMOTE NOTIFICATION ===")
-        print("📦 UserInfo: \(userInfo)")
-        print("🔥 TRIGGERING BACKGROUND GPU WAVENET PROCESSING")
         
-        // Extract notification details from userInfo
-        let title = userInfo["aps"] as? [String: Any] != nil ? 
-                   (userInfo["aps"] as! [String: Any])["alert"] as? String ?? "NightScout Notification" :
-                   "NightScout Notification"
-        let body = "Background glucose notification received"
+        // MARK: - Device Token Handling
+        func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+            print("📱 Device registered for remote notifications")
+            
+            // Send device token to OneSignal (handled automatically by OneSignal SDK)
+            
+            let tokenString = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
+            print("📬 Device Token: \(tokenString)")
+            
+            // Debug OneSignal user info
+            if let userId = OneSignal.User.onesignalId {
+                print("👤 OneSignal User ID: \(userId)")
+            }
+            
+            print("🔔 OneSignal Subscription Status: \(OneSignal.User.pushSubscription.optedIn)")
+        }
         
-        // IMMEDIATELY forward to Apple Watch (critical for watch delivery)
-        WatchConnectivityManager.shared.sendOneSignalNotificationToWatch(
-            title: title,
-            body: body
-        )
+        func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+            print("❌ Failed to register for remote notifications: \(error)")
+        }
         
-        // Trigger GPU WaveNet processing in background
-        Task { @MainActor in
-            await BackgroundGPUWaveNetService.shared.triggerManualGPUPrediction()
-            completionHandler(.newData)
+        // MARK: - App Lifecycle - Automatic HealthKit Sync
+        func applicationDidBecomeActive(_ application: UIApplication) {
+            print("🔄 === APP BECAME ACTIVE - TRIGGERING HEALTHKIT SYNC ===")
+            
+            // Automatically sync HealthKit insulin and carb data to SwiftData
+            // This ensures SwiftData pairs are always fresh for background predictions
+            Task {
+                let syncResults = await WatchConnectivityManager.shared.performHealthKitToSwiftDataSync()
+                print("✅ Automatic HealthKit sync completed - Insulin: \(syncResults.insulin), Carbs: \(syncResults.carbs)")
+            }
+        }
+        
+        // Handle background remote notifications
+        func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable : Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+            print("🔔 === REMOTE NOTIFICATION RECEIVED (no auto actions) ===")
+            print("📦 UserInfo: \(userInfo)")
+            // Do not trigger GPU or forward to watch here.
+            completionHandler(.noData)
         }
     }
 }

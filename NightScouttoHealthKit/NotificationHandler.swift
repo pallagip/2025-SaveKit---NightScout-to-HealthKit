@@ -37,30 +37,9 @@ class NotificationHandler: NSObject, UNUserNotificationCenterDelegate {
         
         // Check if this is a background prediction trigger
         if notification.request.identifier.hasPrefix("prediction_trigger_") {
-            print("🔔 Background prediction trigger fired: \(notification.request.identifier)")
-            
-            // Check if this trigger is already being processed
-            if processingNotifications.contains(notification.request.identifier) {
-                print("⚠️ Trigger \(notification.request.identifier) is already being processed, skipping")
-                completionHandler([])
-                return
-            }
-            
-            // Ensure we have a model container
-            guard let modelContainer = self.modelContainer else {
-                print("❌ No model container available for prediction trigger")
-                completionHandler([])
-                return
-            }
-            
-            print("✅ Starting prediction process for trigger: \(notification.request.identifier)")
-            
-            // Process the prediction in the background
-            Task {
-                await handlePredictionTrigger(identifier: notification.request.identifier)
-            }
-            
-            // Don't show the background trigger notification to the user
+            // Auto GPU predictions are disabled for any notification-based triggers.
+            print("🚫 Ignoring internal prediction trigger (auto GPU disabled): \(notification.request.identifier)")
+            // Keep silent: do not present this internal trigger notification
             completionHandler([])
         } else if notification.request.identifier.hasPrefix("prediction_result_") {
             print("📤 Showing prediction result notification: \(notification.request.identifier)")
@@ -79,18 +58,11 @@ class NotificationHandler: NSObject, UNUserNotificationCenterDelegate {
         let identifier = response.notification.request.identifier
         print("🔔 User tapped notification: \(identifier)")
         
-        // Handle background prediction trigger taps (shouldn't normally happen since they're silent)
+        // Ignore internal prediction trigger taps (auto GPU disabled)
         if identifier.hasPrefix("prediction_trigger_") {
-            // Check if this trigger is already being processed
-            if processingNotifications.contains(identifier) {
-                print("⚠️ Trigger \(identifier) is already being processed, skipping user tap")
-                completionHandler()
-                return
-            }
-            
-            Task {
-                await handlePredictionTrigger(identifier: identifier)
-            }
+            print("🚫 Ignoring internal prediction trigger tap: \(identifier)")
+            completionHandler()
+            return
         }
         // Result notifications don't need special handling - just dismiss
         
