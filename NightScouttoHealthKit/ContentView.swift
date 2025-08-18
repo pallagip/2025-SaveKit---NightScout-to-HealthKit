@@ -136,23 +136,6 @@ struct BGPredictionView: View {
                 HStack {
                     Button("Predict") { Task { await predict() } }
                         .buttonStyle(.borderedProminent)
-                    
-                    Button("🔥 GPU Predict") { 
-                        Task { 
-                            await gpuService.triggerManualGPUPrediction() 
-                        } 
-                    }
-                    .buttonStyle(.bordered)
-                    .foregroundColor(.orange)
-                    .disabled(gpuService.isProcessing)
-                    
-                    Button("🧪 Test Cache") {
-                        Task {
-                            await addTestCacheData()
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .foregroundColor(.blue)
                 }
             }
             .padding()
@@ -333,6 +316,10 @@ struct BGPredictionView: View {
     @MainActor
     private func predict() async {
         do {
+            // Run a 24h Nightscout→HealthKit sync first to ensure latest BG is in HealthKit
+            let savedCount = await SyncManager.shared.performSync(isBackground: false, minutes: 1440)
+            print("✅ Pre-predict sync complete — saved \(savedCount) readings from last 24h")
+            
             // Check for recent insulin or carbohydrate entries within the last 30 minutes
             let hasRecentEntries = try await hk.hasRecentInsulinOrCarbEntries(minutesBack: 30.0)
             
