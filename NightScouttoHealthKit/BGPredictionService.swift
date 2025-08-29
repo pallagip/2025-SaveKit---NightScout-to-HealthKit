@@ -9,12 +9,53 @@ import Foundation
 import CoreML
 import Combine
 import SwiftData
+import Accelerate
 
 /// A service that handles blood glucose predictions using a pre-trained BGPersonal_BiLSTM model
 /// Model architecture: Bidirectional LSTM + Dense layers
 @MainActor
 class BGPredictionService: ObservableObject {
     private let healthKitFeatureProvider = HealthKitFeatureProvider()
+    
+    // WaveNetPro model predictors (lazy-loaded to avoid initialization errors)
+    private lazy var wavenetPro1: DeltaBGWaveNet? = {
+        do {
+            print("🔄 Initializing WaveNetPro1...")
+            let predictor = try DeltaBGWaveNet(resource: "wavenetpro1")
+            print("✅ WaveNetPro1 loaded successfully")
+            return predictor
+        } catch {
+            print("❌ Failed to load WaveNetPro1: \(error.localizedDescription)")
+            print("   Details: \(error)")
+            return nil
+        }
+    }()
+    
+    private lazy var wavenetPro2: DeltaBGWaveNet? = {
+        do {
+            print("🔄 Initializing WaveNetPro2...")
+            let predictor = try DeltaBGWaveNet(resource: "wavenetpro2")
+            print("✅ WaveNetPro2 loaded successfully")
+            return predictor
+        } catch {
+            print("❌ Failed to load WaveNetPro2: \(error.localizedDescription)")
+            print("   Details: \(error)")
+            return nil
+        }
+    }()
+    
+    private lazy var wavenetPro3: DeltaBGWaveNet? = {
+        do {
+            print("🔄 Initializing WaveNetPro3...")
+            let predictor = try DeltaBGWaveNet(resource: "wavenetpro3")
+            print("✅ WaveNetPro3 loaded successfully")
+            return predictor
+        } catch {
+            print("❌ Failed to load WaveNetPro3: \(error.localizedDescription)")
+            print("   Details: \(error)")
+            return nil
+        }
+    }()
     
     /// Published properties that can be observed by views
     @Published var lastPrediction: Double = 0
@@ -23,6 +64,11 @@ class BGPredictionService: ObservableObject {
     @Published var lastError: String?
     @Published var lastModel5Prediction: Double = 0
     @Published var lastModel5PredictionText: String = "—"
+    
+    // WaveNetPro predictions (in mmol/L)
+    @Published var wavenetPro1Prediction: Double = 0
+    @Published var wavenetPro2Prediction: Double = 0
+    @Published var wavenetPro3Prediction: Double = 0
     
     // Constants for prediction scaling and adjustment
     private let baseGlucose: Double = 100.0
@@ -769,6 +815,178 @@ class BGPredictionService: ObservableObject {
         )
         
         return (prediction: prediction, modelPredictions: modelPredictions)
+    }
+    
+    /// Run WaveNetPro predictions using the three pro models
+    /// - Returns: Dictionary with pro model predictions (1, 2, 3 for the three pro models)
+    @MainActor
+    func predictWithWaveNetPro() async throws -> [Int: Double] {
+        isProcessing = true
+        defer { isProcessing = false }
+        
+        do {
+            self.lastError = nil
+            
+            print("\n🔥 === WAVENETPRO PREDICTION ===")
+            
+            // Get current glucose and build comprehensive input data
+            let currentGlucose = try await healthKitFeatureProvider.fetchLatestGlucoseValue()
+            let recentGlucoseReadings = try await healthKitFeatureProvider.fetchRecentGlucoseValues(limit: 24)
+            let heartRate = try await healthKitFeatureProvider.fetchLatestHeartRate(minutesBack: 30.0)
+            let iob = try await getInsulinOnBoard()
+            let cob = try await getCarbsOnBoard()
+            
+            print("🩸 Current BG: \(String(format: "%.1f", currentGlucose)) mg/dL")
+            print("❤️ Heart Rate: \(String(format: "%.0f", heartRate)) bpm")
+            print("💉 IOB: \(String(format: "%.2f", iob)) units")
+            print("🍞 COB: \(String(format: "%.1f", cob)) grams")
+            
+            // Build the 12-feature input for DeltaBGPredictor
+            let features = try buildWaveNetProFeatures(
+                currentGlucose: currentGlucose,
+                recentReadings: recentGlucoseReadings,
+                heartRate: heartRate,
+                iob: iob,
+                cob: cob
+            )
+            
+            var results: [Int: Double] = [:]
+            
+            // Run WaveNetPro1
+            if let predictor1 = wavenetPro1 {
+                do {
+                    print("🔥 Running WaveNetPro1 prediction...")
+                    let delta1 = try predictor1.predictDelta(features: features)
+                    let currentBGMmol = currentGlucose / 18.0
+                    let prediction1 = currentBGMmol + Double(delta1)
+                    results[1] = prediction1
+                    wavenetPro1Prediction = prediction1
+                    print("🔥 WaveNetPro1 SUCCESS: \(String(format: "%.2f", prediction1)) mmol/L (\(String(format: "%.0f", prediction1 * 18.0)) mg/dL)")
+                } catch {
+                    print("❌ WaveNetPro1 prediction error: \(error)")
+                    print("   Error details: \(error.localizedDescription)")
+                }
+            } else {
+                print("❌ WaveNetPro1 predictor is nil - failed to initialize")
+            }
+            
+            // Run WaveNetPro2
+            if let predictor2 = wavenetPro2 {
+                do {
+                    print("🔥 Running WaveNetPro2 prediction...")
+                    let delta2 = try predictor2.predictDelta(features: features)
+                    let currentBGMmol = currentGlucose / 18.0
+                    let prediction2 = currentBGMmol + Double(delta2)
+                    results[2] = prediction2
+                    wavenetPro2Prediction = prediction2
+                    print("🔥 WaveNetPro2 SUCCESS: \(String(format: "%.2f", prediction2)) mmol/L (\(String(format: "%.0f", prediction2 * 18.0)) mg/dL)")
+                } catch {
+                    print("❌ WaveNetPro2 prediction error: \(error)")
+                    print("   Error details: \(error.localizedDescription)")
+                }
+            } else {
+                print("❌ WaveNetPro2 predictor is nil - failed to initialize")
+            }
+            
+            // Run WaveNetPro3
+            if let predictor3 = wavenetPro3 {
+                do {
+                    print("🔥 Running WaveNetPro3 prediction...")
+                    let delta3 = try predictor3.predictDelta(features: features)
+                    let currentBGMmol = currentGlucose / 18.0
+                    let prediction3 = currentBGMmol + Double(delta3)
+                    results[3] = prediction3
+                    wavenetPro3Prediction = prediction3
+                    print("🔥 WaveNetPro3 SUCCESS: \(String(format: "%.2f", prediction3)) mmol/L (\(String(format: "%.0f", prediction3 * 18.0)) mg/dL)")
+                } catch {
+                    print("❌ WaveNetPro3 prediction error: \(error)")
+                    print("   Error details: \(error.localizedDescription)")
+                }
+            } else {
+                print("❌ WaveNetPro3 predictor is nil - failed to initialize")
+            }
+            
+            print("🔥 === WAVENETPRO COMPLETE ===\n")
+            
+            return results
+            
+        } catch {
+            self.lastError = error.localizedDescription
+            print("❌ WaveNetPro prediction error: \(error)")
+            throw error
+        }
+    }
+    
+    /// Build 12-feature input for WaveNetPro models in the correct format
+    /// Expected features: [current_bg, bg_trend, iob, cob, heart_rate, hour_sin, hour_cos, bg_1h_ago, bg_2h_ago, bg_3h_ago, bg_4h_ago, bg_5h_ago]
+    private func buildWaveNetProFeatures(
+        currentGlucose: Double,
+        recentReadings: [Double],
+        heartRate: Double,
+        iob: Double,
+        cob: Double
+    ) throws -> [Float] {
+        print("🔍 === BUILDING WAVENETPRO FEATURES ===")
+        
+        // Convert current glucose to mmol/L and normalize
+        let currentBGMmol = Float(currentGlucose / 18.0)
+        
+        // Calculate BG trend from recent readings (mmol/L per 5 min)
+        let bgTrend: Float
+        if recentReadings.count >= 2 {
+            let current = recentReadings[0] / 18.0
+            let previous = recentReadings[1] / 18.0
+            bgTrend = Float((current - previous) / 5.0)
+        } else {
+            bgTrend = 0.0
+        }
+        
+        // Normalize heart rate (subtract baseline and scale)
+        let normalizedHeartRate = Float((heartRate - 70.0) / 30.0)
+        
+        // Calculate circadian components
+        let calendar = Calendar.current
+        let hour = Double(calendar.component(.hour, from: Date()))
+        let hourFraction = hour + Double(calendar.component(.minute, from: Date())) / 60.0
+        let hourSin = Float(sin(2.0 * .pi * hourFraction / 24.0))
+        let hourCos = Float(cos(2.0 * .pi * hourFraction / 24.0))
+        
+        // Get historical BG values (1-5 hours ago, in mmol/L)
+        var historicalBG: [Float] = []
+        for i in 1...5 {
+            let index = i * 12 // 12 readings per hour (5-min intervals)
+            if index < recentReadings.count {
+                historicalBG.append(Float(recentReadings[index] / 18.0))
+            } else {
+                historicalBG.append(currentBGMmol) // Pad with current if insufficient history
+            }
+        }
+        
+        // Build the 12-feature vector with proper scaling
+        let features: [Float] = [
+            currentBGMmol,              // [0] current_bg (mmol/L) - already normalized
+            bgTrend,                    // [1] bg_trend (mmol/L per 5 min) - already small
+            Float(iob / 10.0),          // [2] iob (units) - scale down from 0-10 to 0-1
+            Float(cob / 100.0),         // [3] cob (grams) - scale down from 0-100 to 0-1
+            normalizedHeartRate,        // [4] heart_rate (normalized) - already normalized
+            hourSin,                    // [5] hour_sin (circadian) - already -1 to 1
+            hourCos,                    // [6] hour_cos (circadian) - already -1 to 1
+            historicalBG[0],            // [7] bg_1h_ago (mmol/L) - already normalized
+            historicalBG[1],            // [8] bg_2h_ago (mmol/L) - already normalized
+            historicalBG[2],            // [9] bg_3h_ago (mmol/L) - already normalized
+            historicalBG[3],            // [10] bg_4h_ago (mmol/L) - already normalized
+            historicalBG[4]             // [11] bg_5h_ago (mmol/L) - already normalized
+        ]
+        
+        print("🔍 Features shape: 12 features")
+        print("🔍 Current BG: \(String(format: "%.2f", features[0])) mmol/L")
+        print("🔍 BG Trend: \(String(format: "%.3f", features[1])) mmol/L per 5min")
+        print("🔍 IOB: \(String(format: "%.2f", features[2])) units")
+        print("🔍 COB: \(String(format: "%.1f", features[3])) grams")
+        print("🔍 Heart Rate: \(String(format: "%.2f", features[4])) (normalized)")
+        print("🔍 === FEATURES BUILD COMPLETE ===")
+        
+        return features
     }
 }
 

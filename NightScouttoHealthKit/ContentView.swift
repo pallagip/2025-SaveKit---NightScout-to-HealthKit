@@ -32,8 +32,9 @@ struct ContentView: View {
 struct BGPredictionView: View {
     @StateObject private var predictionService = BGPredictionService()
     @StateObject private var hk = HealthKitFeatureProvider()
-    @StateObject private var gpuService = BackgroundGPUWaveNetService.shared
-    @State private var predictText = "—"
+    @State private var wavenetPro1Text: String = "—"
+    @State private var wavenetPro2Text: String = "—"
+    @State private var wavenetPro3Text: String = "—"
     @State private var wavenet1Text: String = "—"
     @State private var wavenet2Text: String = "—"
     @State private var wavenet3Text: String = "—"
@@ -57,16 +58,66 @@ struct BGPredictionView: View {
 
     var body: some View {
         VStack(spacing: 24) {
-            // Prediction section
+            // Top 3 WaveNetPro Predictions (Horizontal)
             VStack(spacing: 16) {
-                Text(useMgdlUnits ? "Predicted BG in 20 min (mg/dL)" : "Predicted BG in 20 min (mmol/L)")
+                Text(useMgdlUnits ? "WaveNetPro Predictions - 20 min (mg/dL)" : "WaveNetPro Predictions - 20 min (mmol/L)")
                     .font(.headline)
-                Text(predictText)
-                    .font(.system(size: 64, weight: .bold, design: .rounded))
                 
-                // WaveNet Models Grid
+                // Top 3 WaveNetPro models in horizontal line
+                HStack(spacing: 16) {
+                    VStack(spacing: 4) {
+                        Text("WaveNetPro1")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(wavenetPro1Text)
+                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color(.sRGB, red: 0/255, green: 122/255, blue: 255/255, opacity: 1))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(12)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
+                    
+                    VStack(spacing: 4) {
+                        Text("WaveNetPro2")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(wavenetPro2Text)
+                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color(.sRGB, red: 52/255, green: 199/255, blue: 89/255, opacity: 1))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(12)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
+                    
+                    VStack(spacing: 4) {
+                        Text("WaveNetPro3")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(wavenetPro3Text)
+                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color(.sRGB, red: 255/255, green: 149/255, blue: 0/255, opacity: 1))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(12)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
+                }
+                
+                HStack {
+                    Button("Predict") { Task { await predict() } }
+                        .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding()
+            .background(Color(.systemGray6))
+            .cornerRadius(12)
+            
+            // Standard WaveNet Models Grid (below)
+            VStack(spacing: 16) {
                 VStack(spacing: 8) {
-                    Text("WaveNet Model Predictions")
+                    Text("Standard WaveNet Models")
                         .font(.headline)
                         .padding(.bottom, 4)
                     
@@ -132,11 +183,6 @@ struct BGPredictionView: View {
                         .cornerRadius(8)
                     }
                 }
-                
-                HStack {
-                    Button("Predict") { Task { await predict() } }
-                        .buttonStyle(.borderedProminent)
-                }
             }
             .padding()
             .background(Color(.systemGray6))
@@ -150,17 +196,6 @@ struct BGPredictionView: View {
                     
                     Spacer()
                     
-                    // GPU Service Status
-                    if gpuService.isProcessing {
-                        HStack(spacing: 4) {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                            Text("GPU")
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                        }
-                    }
-                    
                     // Manual refresh button
                     Button(action: {
                         refreshPredictionHistory()
@@ -171,29 +206,6 @@ struct BGPredictionView: View {
                     .disabled(isRefreshing)
                 }
                 .padding(.bottom, 4)
-                
-                // Background GPU Statistics
-                if gpuService.backgroundPredictionCount > 0 {
-                    HStack {
-                        Text("🔥 GPU Background:")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                        Text("\(gpuService.backgroundPredictionCount) predictions")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                        if gpuService.averagePredictionValue > 0 {
-                            Text("• Avg: \(String(format: "%.1f", gpuService.averagePredictionValue)) mg/dL")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        if let lastPrediction = gpuService.lastBackgroundPrediction {
-                            Text("• Last: \(formatRelativeTime(lastPrediction))")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding(.bottom, 2)
-                }
                 
                 if predictions.isEmpty {
                     VStack(spacing: 8) {
@@ -309,7 +321,6 @@ struct BGPredictionView: View {
             
         } catch {
             print("❌ Initialization error: \(error)")
-            predictText = "Init Err"
         }
     }
 
@@ -320,38 +331,43 @@ struct BGPredictionView: View {
             let savedCount = await SyncManager.shared.performSync(isBackground: false, minutes: 1440)
             print("✅ Pre-predict sync complete — saved \(savedCount) readings from last 24h")
             
-            // Check for recent insulin or carbohydrate entries within the last 30 minutes
-            let hasRecentEntries = try await hk.hasRecentInsulinOrCarbEntries(minutesBack: 30.0)
+            // Check for recent insulin or carbohydrate entries within the last 20 minutes (guard)
+            let hasRecentEntries = try await hk.hasRecentInsulinOrCarbEntries(minutesBack: 20.0)
             
             if hasRecentEntries {
                 // Display "Too Early to tell" message and reset all model displays
-                predictText = "Too Early to tell"
+                wavenetPro1Text = "Too Early"
+                wavenetPro2Text = "Too Early"
+                wavenetPro3Text = "Too Early"
                 wavenet1Text = "—"
                 wavenet2Text = "—"
                 wavenet3Text = "—"
                 wavenet4Text = "—"
                 wavenet5Text = "—"
                 
-                print("🚫 Prediction halted: Recent insulin or carbohydrate entry detected within 30 minutes")
+                print("🚫 Prediction halted: Recent insulin or carbohydrate entry detected within 20 minutes")
                 return
             }
             
-            // Get current blood glucose using the correct method
+            // Get current blood glucose and heart rate for real data pipeline connection
             let currentBG = try await hk.fetchLatestGlucoseValue()
-            let currentBGValue = useMgdlUnits ? currentBG : (currentBG / 18.0)
+            let heartRate = try await hk.fetchLatestHeartRate(minutesBack: 30.0)
+            
+            print("🩸 Real BG data connected: \(String(format: "%.1f", currentBG)) mg/dL")
+            print("❤️ Real HR data connected: \(String(format: "%.0f", heartRate)) bpm")
             
             // Update our tracking for trend calculation
-            lastGlucoseReading = currentBGValue
+            lastGlucoseReading = useMgdlUnits ? currentBG : (currentBG / 18.0)
             lastReadingTimestamp = Date()
             
-            // Get heart rate
-            let heartRate = try await hk.fetchLatestHeartRate()
+            // Run WaveNetPro predictions using the new models and real data
+            let proPredictions = try await predictionService.predictWithWaveNetPro()
             
-            // Build input tensor using BGPredictionService's buildWindow method
+            // Update WaveNetPro displays
+            updateWaveNetProDisplays(predictions: proPredictions)
+            
+            // Also run standard WaveNet models for comparison
             let inputTensor = try await hk.buildWindow()
-            
-            // Run all 5 WaveNet models through SeriesPredictionService
-            // Note: currentBG from HealthKit is always in mg/dL, so we always pass usedMgdl: true
             let modelPredictions = await SeriesPredictionService.shared.runSeriesPredictions(
                 window: inputTensor,
                 currentBG: currentBG,
@@ -362,69 +378,18 @@ struct BGPredictionView: View {
             // Update individual WaveNet model displays
             updateWaveNetDisplays(predictions: modelPredictions)
             
-            // Calculate average prediction (in mmol/L)
-            let avgPredictionMmol = calculateAveragePrediction(predictions: modelPredictions)
-            let avgPredictionMgdl = avgPredictionMmol * 18.0
-            
-            // Display the average prediction in the UI
-            if useMgdlUnits {
-                predictText = String(format: "%.0f", avgPredictionMgdl)
-            } else {
-                predictText = String(format: "%.1f", avgPredictionMmol)
-            }
-            
-            // Calculate stability status for the average prediction
-            let recentReadings = try await hk.fetchRecentGlucoseValues(limit: 3)
-            let momentum = calculateMomentum(from: recentReadings)
-            let stabilityStatus = determineStabilityStatus(momentum: momentum)
-            
-            // Calculate the next prediction count for the new prediction
-            let nextPredictionCount = predictionService.calculateNextPredictionCount(modelContext: modelContext)
-            
-            // Create and save the average prediction as a SwiftData object
-            let timestamp = Date()
-            let averagePrediction = Prediction(
-                timestamp: timestamp,
-                predictionValue: useMgdlUnits ? avgPredictionMgdl : avgPredictionMmol,
-                usedMgdlUnits: useMgdlUnits,
-                currentBG: currentBG / 18.0, // Always store currentBG in mmol/L
-                stabilityStatus: stabilityStatus,
-                modelOutput: avgPredictionMmol, // Always store modelOutput in mmol/L
-                modelPredictedChange: 0.0,
-                observedTrend: 0.0,
-                modelWeight: 0.0,
-                trendWeight: 0.0,
-                finalPredictedChange: 0.0,
-                actualBG: 0.0,
-                actualBGTimestamp: nil,
-                modelIndex: 0, // 0 indicates this is an average prediction
-                isAveragePrediction: true,
-                note: "Average of \(modelPredictions.count) WaveNet models",
-                predictionCount: nextPredictionCount
-            )
-            
-            // Save to SwiftData
-            modelContext.insert(averagePrediction)
-            
-            // Try to save the context to ensure data persistence
-            do {
-                try modelContext.save()
-                print("✅ Successfully saved average prediction to database")
-            } catch {
-                print("❌ Failed to save SwiftData context: \(error)")
-            }
-            
-            // Log for debugging
-            print("📊 Created average prediction: \(predictText) \(useMgdlUnits ? "mg/dL" : "mmol/L")")
-            print("📊 Average prediction ID: \(averagePrediction.id)")
-            print("📊 Total predictions in database: \(predictions.count)")
+            // Log successful data connection
+            print("✅ Real blood glucose and heart rate data successfully connected to WaveNetPro pipeline")
+            print("📊 WaveNetPro predictions completed using live health data")
             
             // Force UI refresh by updating the refreshID
             self.refreshID = UUID()
             print("UI refresh triggered")
             
         } catch {
-            predictText = "Err"
+            wavenetPro1Text = "Err"
+            wavenetPro2Text = "Err"
+            wavenetPro3Text = "Err"
             wavenet1Text = "Err"
             wavenet2Text = "Err"
             wavenet3Text = "Err"
@@ -434,6 +399,33 @@ struct BGPredictionView: View {
         }
     }
     
+    private func updateWaveNetProDisplays(predictions: [Int: Double]) {
+        // Update WaveNetPro model displays (predictions are in mmol/L)
+        if let prediction1 = predictions[1] {
+            wavenetPro1Text = useMgdlUnits ? 
+                String(format: "%.0f", prediction1 * 18.0) : 
+                String(format: "%.1f", prediction1)
+        } else {
+            wavenetPro1Text = "—"
+        }
+        
+        if let prediction2 = predictions[2] {
+            wavenetPro2Text = useMgdlUnits ? 
+                String(format: "%.0f", prediction2 * 18.0) : 
+                String(format: "%.1f", prediction2)
+        } else {
+            wavenetPro2Text = "—"
+        }
+        
+        if let prediction3 = predictions[3] {
+            wavenetPro3Text = useMgdlUnits ? 
+                String(format: "%.0f", prediction3 * 18.0) : 
+                String(format: "%.1f", prediction3)
+        } else {
+            wavenetPro3Text = "—"
+        }
+    }
+
     private func updateWaveNetDisplays(predictions: [Int: Prediction]) {
         // Update each WaveNet model display
         if let prediction1 = predictions[1] {
@@ -555,12 +547,6 @@ struct BGPredictionView: View {
         }
     }
     
-    // Helper function to format relative time for GPU service display
-    private func formatRelativeTime(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
     
     // MARK: - Test Cache Data Method
     /// Adds test insulin and carb data to SwiftData caches for testing fallback functionality
@@ -648,7 +634,7 @@ struct BGPredictionView: View {
         do {
             try modelContext.save()
             print("✅ Test cache data saved: \(insulinCount) insulin entries, \(carbCount) carb entries")
-            print("🧪 Now run a GPU prediction to see cache-based IOB/COB calculations in the logs!")
+            print("🧪 Test cache data is now available for predictions!")
             print("📍 Look for debug logs like:")
             print("   • 'Glucose range from cache: X.X to Y.Y mmol/L'")
             print("   • 'IOB from cache: Z.Z units, COB from cache: W.W grams'")

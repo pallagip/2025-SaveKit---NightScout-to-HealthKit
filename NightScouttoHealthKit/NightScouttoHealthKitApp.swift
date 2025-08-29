@@ -63,10 +63,6 @@ struct NightScouttoHealthKitApp: App {
                     // Set the model container for the notification handler
                     NotificationHandler.shared.setModelContainer(modelContainer)
                     
-                    // Initialize and configure BackgroundGPUWaveNetService
-                    BackgroundGPUWaveNetService.shared.setModelContainer(modelContainer)
-                    print("✅ BackgroundGPUWaveNetService initialized with model container")
-                    
                     // Initialize WatchConnectivity for Apple Watch communication
                     _ = WatchConnectivityManager.shared
                     print("✅ WatchConnectivityManager initialized")

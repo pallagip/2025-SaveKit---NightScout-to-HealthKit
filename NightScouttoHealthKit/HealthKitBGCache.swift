@@ -3,7 +3,7 @@ import SwiftData
 import HealthKit
 
 @Model
-final class HealthKitBGCache {
+final class HealthKitBGCache: Sendable {
     var id: UUID
     var timestamp: Date
     var bloodGlucose_mmol: Double

@@ -9,7 +9,7 @@ protocol ModelService {
 }
 
 @Model
-final class Prediction: Identifiable, Hashable {
+final class Prediction: Identifiable, Hashable, Sendable {
     // Core prediction data (original fields)
     var id: UUID  // Required for Identifiable conformance
     var timestamp: Date

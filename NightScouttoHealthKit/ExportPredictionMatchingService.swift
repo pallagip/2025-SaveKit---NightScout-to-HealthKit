@@ -23,7 +23,7 @@ class ExportPredictionMatchingService {
         print("🔄 Starting specialized export matching process...")
         
         // Fetch ALL predictions from SwiftData
-        var descriptor = FetchDescriptor<Prediction>(sortBy: [SortDescriptor(\.timestamp)])
+        let descriptor = FetchDescriptor<Prediction>(sortBy: [SortDescriptor(\.timestamp)])
         let allPredictions = try context.fetch(descriptor)
         
         if allPredictions.isEmpty {

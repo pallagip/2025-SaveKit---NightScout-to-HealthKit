@@ -42,37 +42,6 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     /// - Parameters:
     ///   - prediction: Prediction value in mmol/L
     ///   - timestamp: When the prediction was made
-    /// Sends a GPU prediction result to the Apple Watch
-    /// - Parameters:
-    ///   - prediction: GPU prediction value in mmol/L
-    ///   - timestamp: When the prediction was completed
-    func sendGPUPredictionToWatch(prediction: Double, timestamp: Date = Date()) {
-        guard WCSession.default.activationState == .activated else {
-            print("⚠️ WatchConnectivity not activated for GPU result")
-            return
-        }
-        
-        let message = [
-            "type": "gpu_prediction_result",
-            "prediction_mmol": prediction,
-            "prediction_mgdl": prediction * 18.0,
-            "timestamp": timestamp.timeIntervalSince1970
-        ] as [String: Any]
-        
-        sendMessageToWatch(message: message, description: "GPU prediction result")
-    }
-    
-    /// Sends GPU processing status to the Apple Watch
-    /// - Parameter isProcessing: True if processing started, false if completed
-    func sendGPUProcessingStatusToWatch(isProcessing: Bool) {
-        let message = [
-            "type": "gpu_processing_status",
-            "isProcessing": isProcessing,
-            "timestamp": Date().timeIntervalSince1970
-        ] as [String: Any]
-        
-        sendMessageToWatch(message: message, description: "GPU processing status")
-    }
     
     /// Sends OneSignal notification info to the Apple Watch
     /// - Parameters:
@@ -213,9 +182,8 @@ extension WatchConnectivityManager: WCSessionDelegate {
         if let type = message["type"] as? String {
             switch type {
             case "trigger_gpu_prediction":
-                // Extract heart rate if available
-                let heartRate = message["heart_rate"] as? Double ?? 0.0
-                handleGPUPredictionRequest(message: message, heartRate: heartRate, replyHandler: replyHandler)
+                print("⚠️ GPU prediction requests are no longer supported")
+                replyHandler(["status": "not_supported", "message": "GPU predictions removed"])
             default:
                 print("⚠️ Unknown message type from watch: \(type)")
                 replyHandler(["status": "unknown_type"])
@@ -232,140 +200,22 @@ extension WatchConnectivityManager: WCSessionDelegate {
         if let type = userInfo["type"] as? String {
             switch type {
             case "trigger_gpu_prediction":
-                // Extract heart rate if available
-                let heartRate = userInfo["heart_rate"] as? Double ?? 0.0
-                handleGPUPredictionRequest(message: userInfo, heartRate: heartRate)
+                print("⚠️ GPU prediction requests are no longer supported")
             default:
                 print("⚠️ Unknown background message type from watch: \(type)")
             }
         }
     }
     
-    // MARK: - GPU Prediction Handling
-    private func handleGPUPredictionRequest(message: [String: Any], heartRate: Double, replyHandler: (([String: Any]) -> Void)? = nil) {
-        // Extract comprehensive health data from Watch message
-        let watchInsulin = message["insulin_dose"] as? Double ?? 0.0
-        let watchCarbs = message["carb_amount"] as? Double ?? 0.0
-        let watchGlucose = message["glucose_value"] as? Double ?? 0.0
-        let watchGlucoseTrend = message["glucose_trend"] as? Double ?? 0.0
-        // Optional trusted sample timestamps from Watch (seconds since 1970)
-        let insulinTimestamp: Date? = {
-            if let t = message["insulin_timestamp"] as? TimeInterval { return Date(timeIntervalSince1970: t) }
-            return nil
-        }()
-        let carbTimestamp: Date? = {
-            if let t = message["carb_timestamp"] as? TimeInterval { return Date(timeIntervalSince1970: t) }
-            return nil
-        }()
-        let source = message["source"] as? String ?? "watch_button"
-        
-        print("🧠 === ENHANCED WATCH-TRIGGERED GPU PREDICTION ===")
-        print("📊 Received comprehensive health data from Watch:")
-        print("   ❤️ Heart Rate: \(heartRate) BPM")
-        print("   💉 Insulin: \(watchInsulin) units (ts: \(insulinTimestamp?.formatted() ?? "nil"))")
-        print("   🍞 Carbs: \(watchCarbs) grams (ts: \(carbTimestamp?.formatted() ?? "nil"))")
-        print("   🩸 Glucose: \(watchGlucose) mg/dL")
-        print("   📈 Trend: \(String(format: "%.2f", watchGlucoseTrend)) mg/dL/min")
-        print("   📱 Source: \(source)")
-        
-        // Check app state on main thread
-        Task { @MainActor in
-            print("📱 App state: \(UIApplication.shared.applicationState.rawValue) (0=active, 1=inactive, 2=background)")
-        }
-        
-        // Start background task assertion to prevent app suspension during processing
-        self.startBackgroundTaskForWatchRequest()
-        
-        // Send immediate acknowledgment with enhanced status
-        replyHandler?(["success": true, "status": "enhanced_processing_started", "data_received": true])
-        
-        // Send processing status to watch
-        sendGPUProcessingStatusToWatch(isProcessing: true)
-        
-        // Trigger enhanced prediction process asynchronously
-        Task { @MainActor in
-            print("🚀 === ENHANCED COMPREHENSIVE WATCH-TRIGGERED PREDICTION ===")
-            
-            // Step 1: Enhanced sync with Watch data integration
-            print("🔄 Step 1/2: Enhanced data sync with Watch integration...")
-            var syncResults: (glucose: Int, insulin: Int, carbs: Int, watchDataIntegrated: Bool) = (0, 0, 0, false)
-            do {
-                syncResults = try await self.performEnhancedWatchDataSync(
-                    watchInsulin: watchInsulin,
-                    watchInsulinTimestamp: insulinTimestamp,
-                    watchCarbs: watchCarbs,
-                    watchCarbTimestamp: carbTimestamp,
-                    watchGlucose: watchGlucose,
-                    watchTrend: watchGlucoseTrend
-                )
-                print("✅ Enhanced sync completed - Glucose: \(syncResults.glucose), Insulin: \(syncResults.insulin), Carbs: \(syncResults.carbs), Watch Data: \(syncResults.watchDataIntegrated)")
-            } catch {
-                print("❌ Failed to perform enhanced watch data sync: \(error.localizedDescription)")
-            }
-            
-            // Step 2: Execute GPU WaveNet prediction with comprehensive Watch data
-            print("🔄 Step 2/2: Executing GPU WaveNet prediction with Watch data...")
-            await BackgroundGPUWaveNetService.shared.triggerEnhancedWatchGPUPrediction(
-                heartRate: heartRate,
-                watchInsulin: watchInsulin,
-                watchInsulinTimestamp: insulinTimestamp,
-                watchCarbs: watchCarbs,
-                watchCarbTimestamp: carbTimestamp,
-                watchGlucose: watchGlucose,
-                watchTrend: watchGlucoseTrend
-            )
-            
-            // Wait a moment for prediction to complete
-            do {
-                try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-            } catch {
-                print("⚠️ Task sleep interrupted: \(error)")
-            }
-            
-            print("✅ GPU prediction execution completed")
-            
-            // Get the latest prediction result after processing
-            let predictionStats = BackgroundGPUWaveNetService.shared.getBackgroundPredictionStats()
-            print("📊 Prediction stats after GPU execution: count=\(predictionStats.count), average=\(predictionStats.averageValue)")
-            
-            if predictionStats.averageValue > 0, let lastPredictionTime = predictionStats.lastPrediction {
-                // Convert mg/dL back to mmol/L for watch display
-                let predictionMmol = predictionStats.averageValue / 18.0
-                print("✅ === COMPREHENSIVE PREDICTION COMPLETE FROM WATCH ===")
-                print("📊 Summary:")
-                print("   - Glucose sync: \(syncResults.glucose) readings")
-                print("   - Insulin cache: \(syncResults.insulin) entries")
-                print("   - Carbs cache: \(syncResults.carbs) entries")
-                print("   - GPU prediction: \(String(format: "%.1f", predictionMmol)) mmol/L")
-                
-                // Send comprehensive result to watch
-                self.sendGPUPredictionToWatch(
-                    prediction: predictionMmol,
-                    timestamp: lastPredictionTime
-                )
-                
-                // Send completion status
-                self.sendGPUProcessingStatusToWatch(isProcessing: false)
-                
-                // End background task
-                self.endBackgroundTaskForWatchRequest()
-            } else {
-                print("❌ GPU prediction completed but no result available")
-                self.sendGPUProcessingStatusToWatch(isProcessing: false)
-                
-                // End background task
-                self.endBackgroundTaskForWatchRequest()
-            }
-        }
-    }
     
     // MARK: - HealthKit to SwiftData Sync
     /// Sync HealthKit insulin and carb data to SwiftData for background use
     func performHealthKitToSwiftDataSync() async -> (insulin: Int, carbs: Int) {
         print("🍿 === HEALTHKIT TO SWIFTDATA SYNC ===")
         
-        guard let modelContainer = await BackgroundGPUWaveNetService.shared.getModelContainer() else {
-            print("❌ Model container not available for HealthKit sync")
+        // Create model container directly
+        guard let modelContainer = try? ModelContainer(for: NightScoutInsulinCache.self, NightScoutCarbCache.self) else {
+            print("❌ Failed to create model container for HealthKit sync")
             return (0, 0)
         }
         
@@ -681,8 +531,9 @@ extension WatchConnectivityManager: WCSessionDelegate {
     private func performComprehensiveNightScoutSync() async -> (glucose: Int, insulin: Int, carbs: Int) {
         print("🔍 === COMPREHENSIVE NIGHTSCOUT SYNC METHOD CALLED ===")
         
-        guard let modelContainer = await BackgroundGPUWaveNetService.shared.getModelContainer() else {
-            print("❌ Model container not available for comprehensive sync")
+        // Create model container directly
+        guard let modelContainer = try? ModelContainer(for: HealthKitBGCache.self, NightScoutInsulinCache.self, NightScoutCarbCache.self) else {
+            print("❌ Failed to create model container for comprehensive sync")
             return (0, 0, 0)
         }
         
@@ -869,8 +720,9 @@ extension WatchConnectivityManager: WCSessionDelegate {
         
         do {
             print("🔍 Checking model container availability...")
-            guard let modelContainer = await BackgroundGPUWaveNetService.shared.getModelContainer() else {
-                print("❌ Model container not available for NightScout sync")
+            // Create model container directly
+            guard let modelContainer = try? ModelContainer(for: HealthKitBGCache.self) else {
+                print("❌ Failed to create model container for NightScout sync")
                 print("🔍 This is likely the cause of missing NightScout API sync!")
                 return 0
             }
@@ -1040,8 +892,8 @@ extension WatchConnectivityManager {
                 self.endBackgroundTaskForWatchRequest()
                 
                 // Start new background task
-                self.backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WatchGPUPrediction") {
-                    print("⏰ Background task for Watch GPU prediction expired - ending task")
+                self.backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "WatchRequest") {
+                    print("⏰ Background task for Watch request expired - ending task")
                     self.endBackgroundTaskForWatchRequest()
                 }
                 
