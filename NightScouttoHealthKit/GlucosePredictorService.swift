@@ -17,29 +17,82 @@ class GlucosePredictionSystem {
     private var scalerScale: [Double] = []
     
     init() {
+        print("🌲 Initializing GlucosePredictionSystem...")
         loadModel()
         loadScalerParams()
     }
     
     private func loadModel() {
-        guard let modelURL = Bundle.main.url(forResource: "GlucosePredictor", withExtension: "mlpackage") else {
+        print("🔍 Looking for GlucosePredictor.mlpackage in bundle...")
+        
+        // Try multiple approaches to find the model
+        var modelURL: URL?
+        
+        // Method 1: Look for compiled model (.mlmodelc)
+        modelURL = Bundle.main.url(forResource: "GlucosePredictor", withExtension: "mlmodelc")
+        if modelURL != nil {
+            print("🔍 Found compiled model (.mlmodelc)")
+        }
+        
+        // Method 2: Look for original package (.mlpackage)
+        if modelURL == nil {
+            modelURL = Bundle.main.url(forResource: "GlucosePredictor", withExtension: "mlpackage")
+            if modelURL != nil {
+                print("🔍 Found original package (.mlpackage)")
+            }
+        }
+        
+        // Method 3: Direct path search for compiled model
+        if modelURL == nil {
+            if let bundlePath = Bundle.main.resourcePath {
+                let directPath = bundlePath + "/GlucosePredictor.mlmodelc"
+                if FileManager.default.fileExists(atPath: directPath) {
+                    modelURL = URL(fileURLWithPath: directPath)
+                    print("🔍 Found model via direct path: \(directPath)")
+                }
+            }
+        }
+        
+        guard let finalModelURL = modelURL else {
             print("❌ Could not find GlucosePredictor.mlpackage in bundle")
+            print("📁 Available bundle resources:")
+            if let bundlePath = Bundle.main.resourcePath {
+                do {
+                    let files = try FileManager.default.contentsOfDirectory(atPath: bundlePath)
+                    for file in files {
+                        if file.contains("Glucose") || file.contains("mlpackage") || file.contains("mlmodelc") {
+                            print("   - \(file) ⭐")
+                        } else {
+                            print("   - \(file)")
+                        }
+                    }
+                } catch {
+                    print("   Error listing files: \(error)")
+                }
+            }
             return
         }
         
+        print("✅ Found model at: \(finalModelURL)")
+        
         do {
-            model = try MLModel(contentsOf: modelURL)
+            model = try MLModel(contentsOf: finalModelURL)
             print("✅ CoreML model loaded successfully")
         } catch {
             print("❌ Failed to load CoreML model: \(error)")
+            print("❌ Model URL: \(finalModelURL)")
         }
     }
     
     private func loadScalerParams() {
+        print("🔍 Looking for scaler_params.json in bundle...")
+        
         guard let url = Bundle.main.url(forResource: "scaler_params", withExtension: "json") else {
             print("❌ Could not find scaler_params.json in bundle")
             return
         }
+        
+        print("✅ Found scaler_params.json at: \(url)")
         
         do {
             let data = try Data(contentsOf: url)
@@ -49,6 +102,8 @@ class GlucosePredictionSystem {
                 scalerMean = mean
                 scalerScale = scale
                 print("✅ Scaler parameters loaded: \(mean.count) features")
+            } else {
+                print("❌ Invalid scaler_params.json format")
             }
         } catch {
             print("❌ Failed to load scaler params: \(error)")
@@ -156,8 +211,23 @@ class GlucosePredictionSystem {
         currentTime: Date = Date()
     ) -> Double? {
         
+        print("🌲 GlucosePredictionSystem.predictGlucose() called")
+        print("🌲 Model loaded: \(model != nil)")
+        print("🌲 Scaler params loaded: \(scalerMean.count) mean, \(scalerScale.count) scale")
+        
+        if model == nil {
+            print("❌ Model not loaded - attempting to reload...")
+            loadModel() // Try to load again
+            if model != nil {
+                print("✅ Model loaded successfully on retry")
+            } else {
+                print("❌ Model still not loaded after retry")
+                return nil
+            }
+        }
+        
         guard let model = model else {
-            print("❌ Model not loaded")
+            print("❌ Model still nil after reload attempt")
             return nil
         }
         

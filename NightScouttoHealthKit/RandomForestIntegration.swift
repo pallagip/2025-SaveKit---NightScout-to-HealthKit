@@ -27,7 +27,9 @@ class RandomForestIntegrationService: ObservableObject {
     /// Singleton instance
     static let shared = RandomForestIntegrationService()
     
-    private init() {}
+    private init() {
+        print("🌲 RandomForestIntegrationService.init() called")
+    }
     
     /// Make a Random Forest prediction using comprehensive HealthKit data
     /// - Returns: Prediction value in mg/dL and timestamp
