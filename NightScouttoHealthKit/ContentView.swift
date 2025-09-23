@@ -32,9 +32,9 @@ struct ContentView: View {
 struct BGPredictionView: View {
     @StateObject private var predictionService = BGPredictionService()
     @StateObject private var hk = HealthKitFeatureProvider()
-    @State private var wavenetPro1Text: String = "—"
-    @State private var wavenetPro2Text: String = "—"
-    @State private var wavenetPro3Text: String = "—"
+    @StateObject private var randomForestService = RandomForestIntegrationService.shared
+    @State private var randomForestText: String = "—"
+    @State private var currentBGText: String = "—"
     @State private var wavenet1Text: String = "—"
     @State private var wavenet2Text: String = "—"
     @State private var wavenet3Text: String = "—"
@@ -58,46 +58,33 @@ struct BGPredictionView: View {
 
     var body: some View {
         VStack(spacing: 24) {
-            // Top 3 WaveNetPro Predictions (Horizontal)
+            // Random Forest Integration Prediction
             VStack(spacing: 16) {
-                Text(useMgdlUnits ? "WaveNetPro Predictions - 20 min (mg/dL)" : "WaveNetPro Predictions - 20 min (mmol/L)")
+                Text(useMgdlUnits ? "Random Forest Prediction - 20 min (mg/dL)" : "Random Forest Prediction - 20 min (mmol/L)")
                     .font(.headline)
                 
-                // Top 3 WaveNetPro models in horizontal line
+                // Random Forest and Current BG display
                 HStack(spacing: 16) {
                     VStack(spacing: 4) {
-                        Text("WaveNetPro1")
+                        Text("Current BG")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(wavenetPro1Text)
-                            .font(.system(size: 32, weight: .bold, design: .rounded))
-                            .foregroundStyle(Color(.sRGB, red: 0/255, green: 122/255, blue: 255/255, opacity: 1))
+                        Text(currentBGText)
+                            .font(.system(size: 28, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.primary)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(12)
-                    .background(Color(.systemGray6))
+                    .background(Color(.systemGray5))
                     .cornerRadius(12)
                     
                     VStack(spacing: 4) {
-                        Text("WaveNetPro2")
+                        Text("Random Forest")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(wavenetPro2Text)
+                        Text(randomForestText)
                             .font(.system(size: 32, weight: .bold, design: .rounded))
-                            .foregroundStyle(Color(.sRGB, red: 52/255, green: 199/255, blue: 89/255, opacity: 1))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(12)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(12)
-                    
-                    VStack(spacing: 4) {
-                        Text("WaveNetPro3")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(wavenetPro3Text)
-                            .font(.system(size: 32, weight: .bold, design: .rounded))
-                            .foregroundStyle(Color(.sRGB, red: 255/255, green: 149/255, blue: 0/255, opacity: 1))
+                            .foregroundStyle(Color(.sRGB, red: 46/255, green: 125/255, blue: 50/255, opacity: 1)) // Forest green
                     }
                     .frame(maxWidth: .infinity)
                     .padding(12)
@@ -106,8 +93,9 @@ struct BGPredictionView: View {
                 }
                 
                 HStack {
-                    Button("Predict") { Task { await predict() } }
+                    Button("Predict with Random Forest") { Task { await predictWithRandomForest() } }
                         .buttonStyle(.borderedProminent)
+                        .disabled(randomForestService.isProcessing)
                 }
             }
             .padding()
@@ -336,9 +324,8 @@ struct BGPredictionView: View {
             
             if hasRecentEntries {
                 // Display "Too Early to tell" message and reset all model displays
-                wavenetPro1Text = "Too Early"
-                wavenetPro2Text = "Too Early"
-                wavenetPro3Text = "Too Early"
+                randomForestText = "Too Early"
+                currentBGText = "—"
                 wavenet1Text = "—"
                 wavenet2Text = "—"
                 wavenet3Text = "—"
@@ -360,11 +347,12 @@ struct BGPredictionView: View {
             lastGlucoseReading = useMgdlUnits ? currentBG : (currentBG / 18.0)
             lastReadingTimestamp = Date()
             
-            // Run WaveNetPro predictions using the new models and real data
-            let proPredictions = try await predictionService.predictWithWaveNetPro()
+            // Run Random Forest prediction using comprehensive HealthKit data
+            let (randomForestPrediction, _) = try await randomForestService.predictWithRandomForest()
             
-            // Update WaveNetPro displays
-            updateWaveNetProDisplays(predictions: proPredictions)
+            // Update displays
+            updateRandomForestDisplay(prediction: randomForestPrediction)
+            updateCurrentBGDisplay(currentBG: currentBG)
             
             // Also run standard WaveNet models for comparison
             let inputTensor = try await hk.buildWindow()
@@ -387,9 +375,8 @@ struct BGPredictionView: View {
             print("UI refresh triggered")
             
         } catch {
-            wavenetPro1Text = "Err"
-            wavenetPro2Text = "Err"
-            wavenetPro3Text = "Err"
+            randomForestText = "Err"
+            currentBGText = "Err"
             wavenet1Text = "Err"
             wavenet2Text = "Err"
             wavenet3Text = "Err"
@@ -399,31 +386,60 @@ struct BGPredictionView: View {
         }
     }
     
-    private func updateWaveNetProDisplays(predictions: [Int: Double]) {
-        // Update WaveNetPro model displays (predictions are in mmol/L)
-        if let prediction1 = predictions[1] {
-            wavenetPro1Text = useMgdlUnits ? 
-                String(format: "%.0f", prediction1 * 18.0) : 
-                String(format: "%.1f", prediction1)
-        } else {
-            wavenetPro1Text = "—"
+    // New dedicated Random Forest prediction function
+    private func predictWithRandomForest() async {
+        do {
+            // Run a 24h Nightscout→HealthKit sync first to ensure latest BG is in HealthKit
+            let savedCount = await SyncManager.shared.performSync(isBackground: false, minutes: 1440)
+            print("✅ Pre-predict sync complete — saved \(savedCount) readings from last 24h")
+            
+            // Check for recent insulin or carbohydrate entries within the last 20 minutes (guard)
+            let hasRecentEntries = try await hk.hasRecentInsulinOrCarbEntries(minutesBack: 20.0)
+            
+            if hasRecentEntries {
+                randomForestText = "Too Early"
+                currentBGText = "—"
+                print("🚫 Random Forest prediction halted: Recent insulin or carbohydrate entry detected within 20 minutes")
+                return
+            }
+            
+            // Get current blood glucose for display
+            let currentBG = try await hk.fetchLatestGlucoseValue()
+            updateCurrentBGDisplay(currentBG: currentBG)
+            
+            print("🌲 Starting Random Forest prediction with comprehensive HealthKit data")
+            print("🩸 Current BG: \(String(format: "%.1f", currentBG)) mg/dL")
+            
+            // Run Random Forest prediction
+            let (randomForestPrediction, _) = try await randomForestService.predictWithRandomForest()
+            
+            // Update Random Forest display
+            updateRandomForestDisplay(prediction: randomForestPrediction)
+            
+            print("🌲 Random Forest prediction completed: \(String(format: "%.1f", randomForestPrediction)) mg/dL")
+            
+            // Force UI refresh
+            self.refreshID = UUID()
+            
+        } catch {
+            randomForestText = "Err"
+            currentBGText = "Err"
+            print("❌ Random Forest prediction failed: \(error)")
         }
-        
-        if let prediction2 = predictions[2] {
-            wavenetPro2Text = useMgdlUnits ? 
-                String(format: "%.0f", prediction2 * 18.0) : 
-                String(format: "%.1f", prediction2)
-        } else {
-            wavenetPro2Text = "—"
-        }
-        
-        if let prediction3 = predictions[3] {
-            wavenetPro3Text = useMgdlUnits ? 
-                String(format: "%.0f", prediction3 * 18.0) : 
-                String(format: "%.1f", prediction3)
-        } else {
-            wavenetPro3Text = "—"
-        }
+    }
+    
+    private func updateRandomForestDisplay(prediction: Double) {
+        // Update Random Forest prediction display (prediction is in mg/dL)
+        randomForestText = useMgdlUnits ? 
+            String(format: "%.0f", prediction) : 
+            String(format: "%.1f", prediction / 18.0)
+    }
+    
+    private func updateCurrentBGDisplay(currentBG: Double) {
+        // Update current BG display (currentBG is in mg/dL)
+        currentBGText = useMgdlUnits ? 
+            String(format: "%.0f", currentBG) : 
+            String(format: "%.1f", currentBG / 18.0)
     }
 
     private func updateWaveNetDisplays(predictions: [Int: Prediction]) {
