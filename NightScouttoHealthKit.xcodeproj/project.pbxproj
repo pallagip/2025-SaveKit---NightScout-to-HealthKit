@@ -90,7 +90,7 @@
 		AD9FF5302DCE9C9E00E50BD9 /* Exceptions for "NightScouttoHealthKit" folder in "NightScouttoHealthKit" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				GlucosePredictor.mlpackage,
+				GlucoseChangePredictor.mlpackage,
 				Info.plist,
 				wavenet1.mlpackage,
 				wavenet2.mlpackage,
@@ -121,7 +121,7 @@
 			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
 			buildPhase = AD9FF4F82DCE978500E50BD9 /* Resources */;
 			membershipExceptions = (
-				GlucosePredictor.mlpackage,
+				GlucoseChangePredictor.mlpackage,
 				wavenet1.mlpackage,
 				wavenet2.mlpackage,
 				wavenet3.mlpackage,

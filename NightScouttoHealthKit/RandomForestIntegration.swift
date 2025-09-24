@@ -16,7 +16,7 @@ import Combine
 @MainActor
 class RandomForestIntegrationService: ObservableObject {
     private let healthKitFeatureProvider = HealthKitFeatureProvider()
-    private let glucosePredictionSystem = GlucosePredictionSystem()
+    private let updatedGlucosePredictorService = UpdatedGlucosePredictorService()
     
     /// Published properties for UI observation
     @Published var lastPrediction: Double = 0
@@ -55,9 +55,9 @@ class RandomForestIntegrationService: ObservableObject {
             print("💉 Insulin history: \(insulinHistory.count) entries")
             print("❤️ Heart rate history: \(heartRateHistory.count) readings")
             
-            // Use the GlucosePredictionSystem to make prediction
+            // Use the UpdatedGlucosePredictorService to make prediction
             let timestamp = Date()
-            let prediction = glucosePredictionSystem.predictGlucose(
+            let predictionResult = updatedGlucosePredictorService.predictAbsoluteGlucose(
                 glucoseHistory: glucoseHistory,
                 carbsHistory: carbHistory,
                 insulinHistory: insulinHistory,
@@ -65,7 +65,7 @@ class RandomForestIntegrationService: ObservableObject {
                 currentTime: timestamp
             )
             
-            guard let predictedValue = prediction else {
+            guard let result = predictionResult, let predictedValue = result.absolutePrediction else {
                 throw NSError(domain: "RandomForestError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Random Forest prediction failed"])
             }
             
@@ -157,7 +157,7 @@ class RandomForestIntegrationService: ObservableObject {
             print("💉 Using \(insulinHistory.count) cached insulin entries")
             
             let timestamp = Date()
-            let prediction = glucosePredictionSystem.predictGlucose(
+            let predictionResult = updatedGlucosePredictorService.predictAbsoluteGlucose(
                 glucoseHistory: glucoseHistory,
                 carbsHistory: carbHistory,
                 insulinHistory: insulinHistory,
@@ -165,7 +165,7 @@ class RandomForestIntegrationService: ObservableObject {
                 currentTime: timestamp
             )
             
-            guard let predictedValue = prediction else {
+            guard let result = predictionResult, let predictedValue = result.absolutePrediction else {
                 throw NSError(domain: "RandomForestError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Random Forest cache prediction failed"])
             }
             

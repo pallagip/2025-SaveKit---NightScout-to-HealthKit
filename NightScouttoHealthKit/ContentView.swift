@@ -33,8 +33,11 @@ struct BGPredictionView: View {
     @StateObject private var predictionService = BGPredictionService()
     @StateObject private var hk = HealthKitFeatureProvider()
     @StateObject private var randomForestService = RandomForestIntegrationService.shared
+    @StateObject private var updatedGlucosePredictorService = UpdatedGlucosePredictorService()
     @State private var randomForestText: String = "—"
     @State private var currentBGText: String = "—"
+    @State private var changeBasedPredictionText: String = "—"
+    @State private var changeBasedChangeText: String = "—"
     @State private var wavenet1Text: String = "—"
     @State private var wavenet2Text: String = "—"
     @State private var wavenet3Text: String = "—"
@@ -58,13 +61,14 @@ struct BGPredictionView: View {
 
     var body: some View {
         VStack(spacing: 24) {
-            // Random Forest Integration Prediction
+            // Change-Based Glucose Prediction
             VStack(spacing: 16) {
-                Text(useMgdlUnits ? "Random Forest Prediction - 20 min (mg/dL)" : "Random Forest Prediction - 20 min (mmol/L)")
+                Text(useMgdlUnits ? "Change-Based Prediction - 20 min (mg/dL)" : "Change-Based Prediction - 20 min (mmol/L)")
                     .font(.headline)
                 
-                // Random Forest and Current BG display
-                HStack(spacing: 16) {
+                // Current BG, Change, and Predicted Value display
+                VStack(spacing: 12) {
+                    // Current BG
                     VStack(spacing: 4) {
                         Text("Current BG")
                             .font(.caption)
@@ -78,19 +82,64 @@ struct BGPredictionView: View {
                     .background(Color(.systemGray5))
                     .cornerRadius(12)
                     
-                    VStack(spacing: 4) {
-                        Text("Random Forest")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(randomForestText)
-                            .font(.system(size: 32, weight: .bold, design: .rounded))
-                            .foregroundStyle(Color(.sRGB, red: 46/255, green: 125/255, blue: 50/255, opacity: 1)) // Forest green
+                    // Change and Predicted Value
+                    HStack(spacing: 16) {
+                        VStack(spacing: 4) {
+                            Text("Predicted Change")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(changeBasedChangeText)
+                                .font(.system(size: 24, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.orange)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(12)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(12)
+                        
+                        VStack(spacing: 4) {
+                            Text("Predicted BG")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(changeBasedPredictionText)
+                                .font(.system(size: 32, weight: .bold, design: .rounded))
+                                .foregroundStyle(Color(.sRGB, red: 0/255, green: 100/255, blue: 200/255, opacity: 1)) // Deep blue
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(12)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(12)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(12)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(12)
                 }
+                
+                HStack {
+                    Button("Predict with Change-Based Model") { Task { await predictWithChangeBasedModel() } }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(updatedGlucosePredictorService.isProcessing)
+                }
+            }
+            .padding()
+            .background(Color(.systemGray6))
+            .cornerRadius(12)
+            
+            // Random Forest Integration Prediction
+            VStack(spacing: 16) {
+                Text(useMgdlUnits ? "Random Forest Prediction - 20 min (mg/dL)" : "Random Forest Prediction - 20 min (mmol/L)")
+                    .font(.headline)
+                
+                // Random Forest display
+                VStack(spacing: 4) {
+                    Text("Random Forest")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(randomForestText)
+                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color(.sRGB, red: 46/255, green: 125/255, blue: 50/255, opacity: 1)) // Forest green
+                }
+                .frame(maxWidth: .infinity)
+                .padding(12)
+                .background(Color(.systemGray6))
+                .cornerRadius(12)
                 
                 HStack {
                     Button("Predict with Random Forest") { Task { await predictWithRandomForest() } }
@@ -386,6 +435,82 @@ struct BGPredictionView: View {
         }
     }
     
+    // New dedicated Change-Based Model prediction function
+    private func predictWithChangeBasedModel() async {
+        updatedGlucosePredictorService.isProcessing = true
+        defer { updatedGlucosePredictorService.isProcessing = false }
+        
+        do {
+            // Run a 24h Nightscout→HealthKit sync first to ensure latest BG is in HealthKit
+            let savedCount = await SyncManager.shared.performSync(isBackground: false, minutes: 1440)
+            print("✅ Pre-predict sync complete — saved \(savedCount) readings from last 24h")
+            
+            // Check for recent insulin or carbohydrate entries within the last 20 minutes (guard)
+            let hasRecentEntries = try await hk.hasRecentInsulinOrCarbEntries(minutesBack: 20.0)
+            
+            if hasRecentEntries {
+                changeBasedPredictionText = "Too Early"
+                changeBasedChangeText = "—"
+                currentBGText = "—"
+                print("🚫 Change-based prediction halted: Recent insulin or carbohydrate entry detected within 20 minutes")
+                return
+            }
+            
+            // Get comprehensive HealthKit data for prediction
+            let glucoseHistory = try await hk.fetchRecentGlucoseValues(limit: 24) // Last 2 hours
+            let carbHistory = try await fetchCarbHistoryForPrediction()
+            let insulinHistory = try await fetchInsulinHistoryForPrediction()
+            let heartRateHistory = try await fetchHeartRateHistoryForPrediction()
+            
+            // Ensure we have glucose data and get the current (most recent) glucose value
+            guard !glucoseHistory.isEmpty else {
+                throw NSError(domain: "PredictionError", code: 1, userInfo: [NSLocalizedDescriptionKey: "No glucose history available"])
+            }
+            
+            let currentBG = glucoseHistory.first! // Most recent glucose value from the history
+            updateCurrentBGDisplay(currentBG: currentBG)
+            
+            print("📊 Glucose history order check:")
+            print("   Most recent (first): \(String(format: "%.1f", glucoseHistory.first!)) mg/dL")
+            print("   Oldest (last): \(String(format: "%.1f", glucoseHistory.last!)) mg/dL")
+            print("   Will reverse for prediction service (expects oldest->newest)")
+            
+            print("🔄 Starting change-based prediction with comprehensive HealthKit data")
+            print("🩸 Current BG: \(String(format: "%.1f", currentBG)) mg/dL")
+            print("📊 Using \(glucoseHistory.count) glucose readings, \(carbHistory.count) carb entries, \(insulinHistory.count) insulin entries")
+            
+            // Create a properly ordered glucose history (most recent first, but prediction expects oldest first)
+            let orderedGlucoseHistory = Array(glucoseHistory.reversed()) // Reverse to get oldest->newest
+            
+            // Use the UpdatedGlucosePredictorService to make prediction
+            if let result = updatedGlucosePredictorService.predictAbsoluteGlucose(
+                glucoseHistory: orderedGlucoseHistory,
+                carbsHistory: carbHistory,
+                insulinHistory: insulinHistory,
+                heartRateHistory: heartRateHistory,
+                currentTime: Date()
+            ) {
+                // Update displays with the results
+                updateChangeBasedDisplay(prediction: result.absolutePrediction ?? 0, change: result.predictedChange ?? 0)
+                
+                print("🔄 Change-based prediction completed:")
+                print("   Absolute: \(String(format: "%.1f", result.absolutePrediction ?? 0)) mg/dL")
+                print("   Change: \(result.predictedChange ?? 0 > 0 ? "+" : "")\(String(format: "%.1f", result.predictedChange ?? 0)) mg/dL")
+            } else {
+                throw NSError(domain: "ChangePredictionError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Change-based prediction failed"])
+            }
+            
+            // Force UI refresh
+            self.refreshID = UUID()
+            
+        } catch {
+            changeBasedPredictionText = "Err"
+            changeBasedChangeText = "Err"
+            currentBGText = "Err"
+            print("❌ Change-based prediction failed: \(error)")
+        }
+    }
+    
     // New dedicated Random Forest prediction function
     private func predictWithRandomForest() async {
         do {
@@ -440,6 +565,36 @@ struct BGPredictionView: View {
         currentBGText = useMgdlUnits ? 
             String(format: "%.0f", currentBG) : 
             String(format: "%.1f", currentBG / 18.0)
+    }
+    
+    private func updateChangeBasedDisplay(prediction: Double, change: Double) {
+        // Update change-based prediction display (values are in mg/dL)
+        changeBasedPredictionText = useMgdlUnits ? 
+            String(format: "%.0f", prediction) : 
+            String(format: "%.1f", prediction / 18.0)
+            
+        let changePrefix = change > 0 ? "+" : ""
+        changeBasedChangeText = useMgdlUnits ?
+            "\(changePrefix)\(String(format: "%.0f", change))" :
+            "\(changePrefix)\(String(format: "%.1f", change / 18.0))"
+    }
+    
+    // Helper methods to fetch data for change-based predictions
+    private func fetchCarbHistoryForPrediction() async throws -> [Double] {
+        let carbIntakes = try await hk.fetchRecentCarbIntake(hoursBack: 6.0)
+        return carbIntakes.map { $0.grams }
+    }
+    
+    private func fetchInsulinHistoryForPrediction() async throws -> [Double] {
+        let insulinDoses = try await hk.fetchRecentInsulinDoses(hoursBack: 6.0)
+        return insulinDoses.map { $0.units }
+    }
+    
+    private func fetchHeartRateHistoryForPrediction() async throws -> [Double] {
+        // Get recent heart rate readings
+        let heartRate = try await hk.fetchLatestHeartRate(minutesBack: 30.0)
+        // Return array with repeated current heart rate for now
+        return Array(repeating: heartRate, count: 8)
     }
 
     private func updateWaveNetDisplays(predictions: [Int: Prediction]) {
