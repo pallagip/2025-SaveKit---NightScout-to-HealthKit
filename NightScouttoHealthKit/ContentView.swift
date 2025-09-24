@@ -32,9 +32,7 @@ struct ContentView: View {
 struct BGPredictionView: View {
     @StateObject private var predictionService = BGPredictionService()
     @StateObject private var hk = HealthKitFeatureProvider()
-    @StateObject private var randomForestService = RandomForestIntegrationService.shared
     @StateObject private var updatedGlucosePredictorService = UpdatedGlucosePredictorService()
-    @State private var randomForestText: String = "—"
     @State private var currentBGText: String = "—"
     @State private var changeBasedPredictionText: String = "—"
     @State private var changeBasedChangeText: String = "—"
@@ -116,35 +114,6 @@ struct BGPredictionView: View {
                     Button("Predict with Change-Based Model") { Task { await predictWithChangeBasedModel() } }
                         .buttonStyle(.borderedProminent)
                         .disabled(updatedGlucosePredictorService.isProcessing)
-                }
-            }
-            .padding()
-            .background(Color(.systemGray6))
-            .cornerRadius(12)
-            
-            // Random Forest Integration Prediction
-            VStack(spacing: 16) {
-                Text(useMgdlUnits ? "Random Forest Prediction - 20 min (mg/dL)" : "Random Forest Prediction - 20 min (mmol/L)")
-                    .font(.headline)
-                
-                // Random Forest display
-                VStack(spacing: 4) {
-                    Text("Random Forest")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(randomForestText)
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color(.sRGB, red: 46/255, green: 125/255, blue: 50/255, opacity: 1)) // Forest green
-                }
-                .frame(maxWidth: .infinity)
-                .padding(12)
-                .background(Color(.systemGray6))
-                .cornerRadius(12)
-                
-                HStack {
-                    Button("Predict with Random Forest") { Task { await predictWithRandomForest() } }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(randomForestService.isProcessing)
                 }
             }
             .padding()
@@ -373,7 +342,6 @@ struct BGPredictionView: View {
             
             if hasRecentEntries {
                 // Display "Too Early to tell" message and reset all model displays
-                randomForestText = "Too Early"
                 currentBGText = "—"
                 wavenet1Text = "—"
                 wavenet2Text = "—"
@@ -396,11 +364,7 @@ struct BGPredictionView: View {
             lastGlucoseReading = useMgdlUnits ? currentBG : (currentBG / 18.0)
             lastReadingTimestamp = Date()
             
-            // Run Random Forest prediction using comprehensive HealthKit data
-            let (randomForestPrediction, _) = try await randomForestService.predictWithRandomForest()
-            
-            // Update displays
-            updateRandomForestDisplay(prediction: randomForestPrediction)
+            // Update current BG display
             updateCurrentBGDisplay(currentBG: currentBG)
             
             // Also run standard WaveNet models for comparison
@@ -424,7 +388,6 @@ struct BGPredictionView: View {
             print("UI refresh triggered")
             
         } catch {
-            randomForestText = "Err"
             currentBGText = "Err"
             wavenet1Text = "Err"
             wavenet2Text = "Err"
@@ -509,55 +472,6 @@ struct BGPredictionView: View {
             currentBGText = "Err"
             print("❌ Change-based prediction failed: \(error)")
         }
-    }
-    
-    // New dedicated Random Forest prediction function
-    private func predictWithRandomForest() async {
-        do {
-            // Run a 24h Nightscout→HealthKit sync first to ensure latest BG is in HealthKit
-            let savedCount = await SyncManager.shared.performSync(isBackground: false, minutes: 1440)
-            print("✅ Pre-predict sync complete — saved \(savedCount) readings from last 24h")
-            
-            // Check for recent insulin or carbohydrate entries within the last 20 minutes (guard)
-            let hasRecentEntries = try await hk.hasRecentInsulinOrCarbEntries(minutesBack: 20.0)
-            
-            if hasRecentEntries {
-                randomForestText = "Too Early"
-                currentBGText = "—"
-                print("🚫 Random Forest prediction halted: Recent insulin or carbohydrate entry detected within 20 minutes")
-                return
-            }
-            
-            // Get current blood glucose for display
-            let currentBG = try await hk.fetchLatestGlucoseValue()
-            updateCurrentBGDisplay(currentBG: currentBG)
-            
-            print("🌲 Starting Random Forest prediction with comprehensive HealthKit data")
-            print("🩸 Current BG: \(String(format: "%.1f", currentBG)) mg/dL")
-            
-            // Run Random Forest prediction
-            let (randomForestPrediction, _) = try await randomForestService.predictWithRandomForest()
-            
-            // Update Random Forest display
-            updateRandomForestDisplay(prediction: randomForestPrediction)
-            
-            print("🌲 Random Forest prediction completed: \(String(format: "%.1f", randomForestPrediction)) mg/dL")
-            
-            // Force UI refresh
-            self.refreshID = UUID()
-            
-        } catch {
-            randomForestText = "Err"
-            currentBGText = "Err"
-            print("❌ Random Forest prediction failed: \(error)")
-        }
-    }
-    
-    private func updateRandomForestDisplay(prediction: Double) {
-        // Update Random Forest prediction display (prediction is in mg/dL)
-        randomForestText = useMgdlUnits ? 
-            String(format: "%.0f", prediction) : 
-            String(format: "%.1f", prediction / 18.0)
     }
     
     private func updateCurrentBGDisplay(currentBG: Double) {
