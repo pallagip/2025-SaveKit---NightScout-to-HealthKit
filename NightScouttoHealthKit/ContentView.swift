@@ -459,6 +459,16 @@ struct BGPredictionView: View {
                 print("🔄 Change-based prediction completed:")
                 print("   Absolute: \(String(format: "%.1f", result.absolutePrediction ?? 0)) mg/dL")
                 print("   Change: \(result.predictedChange ?? 0 > 0 ? "+" : "")\(String(format: "%.1f", result.predictedChange ?? 0)) mg/dL")
+                
+                // Cache Random Forest prediction in SwiftData for CSV export
+                Task {
+                    await cacheRandomForestPrediction(
+                        prediction: result.absolutePrediction ?? 0,
+                        timestamp: Date(),
+                        carbHistory: carbHistory,
+                        insulinHistory: insulinHistory
+                    )
+                }
             } else {
                 throw NSError(domain: "ChangePredictionError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Change-based prediction failed"])
             }
@@ -727,6 +737,69 @@ struct BGPredictionView: View {
             print("❌ Failed to save test cache data: \(error)")
         }
     }
+    
+    /// Cache a Random Forest prediction in SwiftData
+    private func cacheRandomForestPrediction(
+        prediction: Double,
+        timestamp: Date,
+        carbHistory: [Double],
+        insulinHistory: [Double]
+    ) async {
+        do {
+            // Convert prediction from mg/dL to mmol/L
+            let predictionMmol = prediction / 18.0
+            
+            // Calculate prediction count
+            let predictionCount = try calculateNextRandomForestPredictionCount()
+            
+            // Create the RandomForestPrediction object
+            let randomForestPrediction = RandomForestPrediction(
+                timestamp: timestamp,
+                predictionValue_mmol: predictionMmol,
+                predictionCount: predictionCount
+            )
+            
+            // Set carb and insulin timing information
+            let lastCarbTimestamp = try await fetchLastCarbTimestamp(before: timestamp, hoursBack: 5.0)
+            let lastInsulinTimestamp = try await fetchLastInsulinTimestamp(before: timestamp, hoursBack: 4.0)
+            
+            randomForestPrediction.setCarbTiming(lastCarbTimestamp: lastCarbTimestamp, predictionTimestamp: timestamp)
+            randomForestPrediction.setInsulinTiming(lastInsulinTimestamp: lastInsulinTimestamp, predictionTimestamp: timestamp)
+            
+            // Insert into SwiftData
+            modelContext.insert(randomForestPrediction)
+            try modelContext.save()
+            
+            print("🌲 Random Forest prediction cached: \(String(format: "%.1f", prediction)) mg/dL at \(timestamp.formatted())")
+            
+        } catch {
+            print("❌ Failed to cache Random Forest prediction: \(error)")
+        }
+    }
+    
+    /// Calculate next Random Forest prediction count
+    private func calculateNextRandomForestPredictionCount() throws -> Int {
+        let descriptor = FetchDescriptor<RandomForestPrediction>(
+            sortBy: [SortDescriptor(\RandomForestPrediction.predictionCount, order: .reverse)]
+        )
+        let predictions = try modelContext.fetch(descriptor)
+        
+        if let latestCount = predictions.first?.predictionCount {
+            return latestCount + 1
+        } else {
+            return 1
+        }
+    }
+    
+    /// Fetch last carb timestamp before a given time
+    private func fetchLastCarbTimestamp(before timestamp: Date, hoursBack: Double) async throws -> Date? {
+        return try await hk.fetchLastCarbEntryTimestamp(hoursBack: hoursBack)
+    }
+    
+    /// Fetch last insulin timestamp before a given time
+    private func fetchLastInsulinTimestamp(before timestamp: Date, hoursBack: Double) async throws -> Date? {
+        return try await hk.fetchLastInsulinEntryTimestamp(hoursBack: hoursBack)
+    }
 }
 
 // MARK: - Settings & Nightscout Sync
@@ -740,6 +813,7 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \MultiModelPrediction.timestamp, order: .reverse) private var multiModelPredictions: [MultiModelPrediction]
     @Query(sort: \HealthKitBGCache.timestamp, order: .reverse) private var cachedBGReadings: [HealthKitBGCache]
+    @Query(sort: \RandomForestPrediction.timestamp, order: .reverse) private var randomForestPredictions: [RandomForestPrediction]
     // Next sync date (written when a sync is scheduled)
     @AppStorage("nextSyncDate")    private var nextSyncDate           = Date()
     // Blood glucose units preference
@@ -751,6 +825,11 @@ struct SettingsView: View {
     // For CSV export and sharing
     @State private var showingShareSheet = false
     @State private var csvURL: URL?
+    @State private var randomForestCSVURL: URL?
+    @State private var showingRandomForestShareSheet = false
+    
+    // Random Forest caching service
+    @StateObject private var randomForestCachingService = RandomForestCachingService.shared
 
 
     // View model (no parameters → safe to initialize here)
@@ -980,6 +1059,92 @@ struct SettingsView: View {
             .padding(.top, 8)
             .disabled(viewModel.syncInProgress || multiModelPredictions.isEmpty)
             
+            // MARK: - Random Forest Section
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Random Forest Predictions")
+                    .font(.headline)
+                    .padding(.bottom, 4)
+                
+                // Random Forest Cache button
+                Button {
+                    Task {
+                        do {
+                            viewModel.syncInProgress = true
+                            let cachedCount = try await randomForestCachingService.cacheRandomForestPredictions(
+                                modelContext: modelContext,
+                                hoursBack: 24.0
+                            )
+                            viewModel.lastSyncResult = "Cached \(cachedCount) Random Forest predictions from last 24 hours"
+                        } catch {
+                            print("⚠️ Random Forest caching failed: \(error)")
+                            viewModel.lastSyncResult = "Random Forest caching failed: \(error.localizedDescription)"
+                        }
+                        viewModel.syncInProgress = false
+                    }
+                } label: {
+                    if viewModel.syncInProgress {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle())
+                            .scaleEffect(0.8)
+                    } else {
+                        Text("Random Forest Cache (24h)")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .padding()
+                .background(viewModel.syncInProgress ? Color.gray : Color(.sRGB, red: 46/255, green: 125/255, blue: 50/255, opacity: 1))
+                .foregroundColor(.white)
+                .cornerRadius(10)
+                .disabled(viewModel.syncInProgress)
+                
+                // Export Random Forest CSV button
+                Button {
+                    Task {
+                        do {
+                            viewModel.syncInProgress = true
+                            
+                            // Export Random Forest predictions to CSV
+                            let fileURL = try await RandomForestCSVExportManager.shared.exportRandomForestPredictions(
+                                predictions: randomForestPredictions,
+                                modelContext: modelContext
+                            )
+                            
+                            // Store URL for sharing
+                            randomForestCSVURL = fileURL
+                            showingRandomForestShareSheet = true
+                            
+                        } catch {
+                            print("⚠️ Random Forest CSV Export failed: \(error)")
+                            viewModel.lastSyncResult = "Random Forest CSV Export failed: \(error.localizedDescription)"
+                        }
+                        
+                        viewModel.syncInProgress = false
+                    }
+                } label: {
+                    if viewModel.syncInProgress {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle())
+                            .scaleEffect(0.8)
+                    } else {
+                        Text("Export Random Forest CSV (\(randomForestPredictions.count))")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .tint(.green)
+                .padding(.top, 8)
+                .disabled(viewModel.syncInProgress || randomForestPredictions.isEmpty)
+                
+                // Random Forest status display
+                if let result = randomForestCachingService.lastCacheResult {
+                    Text(result)
+                        .font(.caption)
+                        .foregroundColor(result.contains("failed") ? .red : .green)
+                        .padding(.top, 4)
+                }
+            }
+            .padding()
+            
             Divider().padding(.vertical)
             
             // MARK: - Notification Testing Section
@@ -1060,6 +1225,11 @@ struct SettingsView: View {
         .sheet(isPresented: $showingShareSheet) {
             if let csvURL = csvURL {
                 ShareSheet(activityItems: [csvURL])
+            }
+        }
+        .sheet(isPresented: $showingRandomForestShareSheet) {
+            if let randomForestCSVURL = randomForestCSVURL {
+                ShareSheet(activityItems: [randomForestCSVURL])
             }
         }
     }
