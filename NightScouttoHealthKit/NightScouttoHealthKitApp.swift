@@ -20,7 +20,7 @@ struct NightScouttoHealthKitApp: App {
             // Get App Group container URL
             guard let appGroupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ProDiabeticsTeam.NightScouttoHealthKitv1.onesignal") else {
                 print("⚠️ App Group container not available, using default container")
-                return try ModelContainer(for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self, NightScoutInsulinCache.self, NightScoutCarbCache.self)
+                return try ModelContainer(for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self, NightScoutInsulinCache.self, NightScoutCarbCache.self, RandomForestPrediction.self)
             }
             
             // Ensure Application Support directory exists
@@ -38,7 +38,7 @@ struct NightScouttoHealthKitApp: App {
             )
             
             return try ModelContainer(
-                for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self, NightScoutInsulinCache.self, NightScoutCarbCache.self,
+                for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self, NightScoutInsulinCache.self, NightScoutCarbCache.self, RandomForestPrediction.self,
                 configurations: configuration
             )
             
@@ -48,7 +48,7 @@ struct NightScouttoHealthKitApp: App {
             
             // Fallback to default container if App Group fails
             do {
-                return try ModelContainer(for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self, NightScoutInsulinCache.self, NightScoutCarbCache.self)
+                return try ModelContainer(for: Prediction.self, MultiModelPrediction.self, HealthKitBGCache.self, WorkoutTimeData.self, NightScoutInsulinCache.self, NightScoutCarbCache.self, RandomForestPrediction.self)
             } catch {
                 fatalError("Failed to create fallback ModelContainer: \(error)")
             }

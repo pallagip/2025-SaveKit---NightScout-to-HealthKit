@@ -461,6 +461,7 @@ struct BGPredictionView: View {
                 print("   Change: \(result.predictedChange ?? 0 > 0 ? "+" : "")\(String(format: "%.1f", result.predictedChange ?? 0)) mg/dL")
                 
                 // Cache Random Forest prediction in SwiftData for CSV export
+                print("🎯 About to cache individual RandomForest prediction from Change-Based Model")
                 Task {
                     await cacheRandomForestPrediction(
                         prediction: result.absolutePrediction ?? 0,
@@ -468,6 +469,18 @@ struct BGPredictionView: View {
                         carbHistory: carbHistory,
                         insulinHistory: insulinHistory
                     )
+                    
+                    print("🎯 Individual RandomForest prediction caching completed, sending notification...")
+                    
+                    // Notify that RandomForest data has been updated for CSV export
+                    await MainActor.run {
+                        NotificationCenter.default.post(
+                            name: NSNotification.Name("RandomForestDataUpdated"),
+                            object: nil,
+                            userInfo: ["modelContext": modelContext]
+                        )
+                        print("🎯 RandomForestDataUpdated notification sent with context!")
+                    }
                 }
             } else {
                 throw NSError(domain: "ChangePredictionError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Change-based prediction failed"])
@@ -745,12 +758,15 @@ struct BGPredictionView: View {
         carbHistory: [Double],
         insulinHistory: [Double]
     ) async {
+        print("🌲 Starting to cache RandomForest prediction: \(String(format: "%.1f", prediction)) mg/dL")
         do {
             // Convert prediction from mg/dL to mmol/L
             let predictionMmol = prediction / 18.0
+            print("🌲 Converted to mmol/L: \(String(format: "%.2f", predictionMmol))")
             
             // Calculate prediction count
             let predictionCount = try calculateNextRandomForestPredictionCount()
+            print("🌲 Calculated prediction count: \(predictionCount)")
             
             // Create the RandomForestPrediction object
             let randomForestPrediction = RandomForestPrediction(
@@ -771,6 +787,7 @@ struct BGPredictionView: View {
             try modelContext.save()
             
             print("🌲 Random Forest prediction cached: \(String(format: "%.1f", prediction)) mg/dL at \(timestamp.formatted())")
+            print("🌲 Prediction count: \(predictionCount), mmol/L: \(String(format: "%.2f", predictionMmol))")
             
         } catch {
             print("❌ Failed to cache Random Forest prediction: \(error)")
@@ -814,6 +831,9 @@ struct SettingsView: View {
     @Query(sort: \MultiModelPrediction.timestamp, order: .reverse) private var multiModelPredictions: [MultiModelPrediction]
     @Query(sort: \HealthKitBGCache.timestamp, order: .reverse) private var cachedBGReadings: [HealthKitBGCache]
     @Query(sort: \RandomForestPrediction.timestamp, order: .reverse) private var randomForestPredictions: [RandomForestPrediction]
+    
+    // Manual random forest predictions array for more control
+    @State private var manualRandomForestPredictions: [RandomForestPrediction] = []
     // Next sync date (written when a sync is scheduled)
     @AppStorage("nextSyncDate")    private var nextSyncDate           = Date()
     // Blood glucose units preference
@@ -825,18 +845,34 @@ struct SettingsView: View {
     // For CSV export and sharing
     @State private var showingShareSheet = false
     @State private var csvURL: URL?
-    @State private var randomForestCSVURL: URL?
     @State private var showingRandomForestShareSheet = false
+    @State private var randomForestCSVURL: URL?
     
     // Random Forest caching service
     @StateObject private var randomForestCachingService = RandomForestCachingService.shared
-
+    
+    // Force refresh for RandomForest predictions
+    @State private var randomForestRefreshID = UUID()
 
     // View model (no parameters → safe to initialize here)
     @StateObject private var viewModel = ContentViewModel()
-    
     // Track UI state
     @State private var isInitialized = false
+    
+    // Computed property to get the current count of RandomForest predictions
+    private var currentRandomForestCount: Int {
+        let manualCount = manualRandomForestPredictions.count
+        let queryCount = randomForestPredictions.count
+        print("🔍 RandomForest count debug - Manual: \(manualCount), Query: \(queryCount)")
+        
+        // Use whichever has more predictions (handles both scenarios)
+        return max(manualCount, queryCount)
+    }
+    
+    // Computed property to determine which array to use for export
+    private var randomForestPredictionsForExport: [RandomForestPrediction] {
+        manualRandomForestPredictions.isEmpty ? randomForestPredictions : manualRandomForestPredictions
+    }
     
     // Computed property for current CET time
     private var currentCETTime: String {
@@ -844,6 +880,65 @@ struct SettingsView: View {
         formatter.timeZone = TimeZone(identifier: "Europe/Berlin")
         formatter.dateFormat = "HH:mm:ss 'CET'"
         return formatter.string(from: Date())
+    }
+    
+    // MARK: - Helper Methods
+    
+    /// Manually refresh RandomForest predictions from SwiftData using notification context
+    private func refreshRandomForestPredictionsWithContext(_ context: ModelContext) async {
+        print("🔄 Starting manual refresh with notification context...")
+        do {
+            // Force save any pending changes first
+            try context.save()
+            
+            let descriptor = FetchDescriptor<RandomForestPrediction>(
+                sortBy: [SortDescriptor(\RandomForestPrediction.timestamp, order: .reverse)]
+            )
+            let predictions = try context.fetch(descriptor)
+            
+            await MainActor.run {
+                manualRandomForestPredictions = predictions
+                print("🌲 Notification context refresh complete: \(predictions.count) RandomForest predictions found")
+                if !predictions.isEmpty {
+                    print("🌲 Latest prediction: \(predictions.first!.timestamp.formatted()) - \(String(format: "%.2f", predictions.first!.predictionMmol)) mmol/L")
+                }
+            }
+        } catch {
+            print("❌ Failed to refresh with notification context: \(error)")
+        }
+    }
+    
+    /// Manually refresh RandomForest predictions from SwiftData
+    private func refreshRandomForestPredictions() async {
+        print("🔄 Starting manual refresh of RandomForest predictions...")
+        do {
+            // Force save any pending changes first
+            try modelContext.save()
+            
+            let descriptor = FetchDescriptor<RandomForestPrediction>(
+                sortBy: [SortDescriptor(\RandomForestPrediction.timestamp, order: .reverse)]
+            )
+            let predictions = try modelContext.fetch(descriptor)
+            
+            await MainActor.run {
+                manualRandomForestPredictions = predictions
+                print("🌲 Manual refresh complete: \(predictions.count) RandomForest predictions found")
+                if !predictions.isEmpty {
+                    print("🌲 Latest prediction: \(predictions.first!.timestamp.formatted()) - \(String(format: "%.2f", predictions.first!.predictionMmol)) mmol/L")
+                } else {
+                    // Debug: let's see what other models are in the database
+                    do {
+                        let allDescriptor = FetchDescriptor<RandomForestPrediction>()
+                        let allPredictions = try modelContext.fetch(allDescriptor)
+                        print("🔍 Debug: Found \(allPredictions.count) total RandomForest predictions in database")
+                    } catch {
+                        print("🔍 Debug: Failed to fetch all predictions: \(error)")
+                    }
+                }
+            }
+        } catch {
+            print("❌ Failed to refresh RandomForest predictions: \(error)")
+        }
     }
 
     var body: some View {
@@ -938,14 +1033,6 @@ struct SettingsView: View {
             .foregroundColor(.white)
             .cornerRadius(10)
             .disabled(viewModel.syncInProgress)
-            .onAppear {
-                if !isInitialized {
-                    Task { 
-                        await viewModel.initialize(with: modelContext)
-                        isInitialized = true
-                    }
-                }
-            }
 
             // Status
             if let result = viewModel.lastSyncResult {
@@ -1075,6 +1162,9 @@ struct SettingsView: View {
                                 hoursBack: 24.0
                             )
                             viewModel.lastSyncResult = "Cached \(cachedCount) Random Forest predictions from last 24 hours"
+                            
+                            // Force refresh after caching
+                            await refreshRandomForestPredictions()
                         } catch {
                             print("⚠️ Random Forest caching failed: \(error)")
                             viewModel.lastSyncResult = "Random Forest caching failed: \(error.localizedDescription)"
@@ -1103,9 +1193,12 @@ struct SettingsView: View {
                         do {
                             viewModel.syncInProgress = true
                             
+                            // Refresh manual array first to ensure we have the latest data
+                            await refreshRandomForestPredictions()
+                            
                             // Export Random Forest predictions to CSV
                             let fileURL = try await RandomForestCSVExportManager.shared.exportRandomForestPredictions(
-                                predictions: randomForestPredictions,
+                                predictions: randomForestPredictionsForExport,
                                 modelContext: modelContext
                             )
                             
@@ -1126,14 +1219,79 @@ struct SettingsView: View {
                             .progressViewStyle(CircularProgressViewStyle())
                             .scaleEffect(0.8)
                     } else {
-                        Text("Export Random Forest CSV (\(randomForestPredictions.count))")
+                        Text("Export Random Forest CSV (\(currentRandomForestCount))")
                             .frame(maxWidth: .infinity)
                     }
                 }
                 .buttonStyle(.bordered)
                 .tint(.green)
                 .padding(.top, 8)
-                .disabled(viewModel.syncInProgress || randomForestPredictions.isEmpty)
+                .disabled(viewModel.syncInProgress)
+                
+                // Test button to create a simple RandomForest prediction
+                Button("🧪 Test: Create Simple Prediction") {
+                    Task {
+                        print("🧪 Creating test RandomForest prediction...")
+                        let testPrediction = RandomForestPrediction(
+                            timestamp: Date(),
+                            predictionValue_mmol: 10.0,
+                            predictionCount: 999
+                        )
+                        print("🧪 Created test prediction at: \(testPrediction.timestamp.formatted())")
+                        
+                        modelContext.insert(testPrediction)
+                        print("🧪 Inserted test prediction, hasChanges: \(modelContext.hasChanges)")
+                        
+                        do {
+                            try modelContext.save()
+                            print("🧪 Saved test prediction successfully")
+                        } catch {
+                            print("🧪 Failed to save test prediction: \(error)")
+                        }
+                        
+                        // Try to fetch it back
+                        let descriptor = FetchDescriptor<RandomForestPrediction>()
+                        let allPredictions = try? modelContext.fetch(descriptor)
+                        print("🧪 Fetched \(allPredictions?.count ?? 0) total predictions after test")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .tint(.purple)
+                .padding(.top, 4)
+                
+                // Debug button to manually check RandomForest predictions
+                Button("🔍 Debug: Check RandomForest DB") {
+                    Task {
+                        print("🔍 === DEBUG RANDOMFOREST DATABASE ===")
+                        
+                        // Check what's in the @Query first
+                        print("🔍 @Query count: \(randomForestPredictions.count)")
+                        if !randomForestPredictions.isEmpty {
+                            print("🔍 @Query latest: \(randomForestPredictions.first!.timestamp.formatted())")
+                        }
+                        
+                        // Force a manual refresh
+                        await refreshRandomForestPredictions()
+                        print("🔍 Manual array count after refresh: \(manualRandomForestPredictions.count)")
+                        
+                        // Try different fetch approaches
+                        do {
+                            let allDescriptor = FetchDescriptor<RandomForestPrediction>()
+                            let allPredictions = try modelContext.fetch(allDescriptor)
+                            print("🔍 Direct fetch found: \(allPredictions.count) predictions")
+                            
+                            if !allPredictions.isEmpty {
+                                let latest = allPredictions.sorted { $0.timestamp > $1.timestamp }.first!
+                                print("🔍 Latest direct fetch: \(latest.timestamp.formatted()) - \(String(format: "%.2f", latest.predictionMmol)) mmol/L")
+                            }
+                        } catch {
+                            print("🔍 Direct fetch failed: \(error)")
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .tint(.blue)
+                .padding(.top, 4)
                 
                 // Random Forest status display
                 if let result = randomForestCachingService.lastCacheResult {
@@ -1230,6 +1388,44 @@ struct SettingsView: View {
         .sheet(isPresented: $showingRandomForestShareSheet) {
             if let randomForestCSVURL = randomForestCSVURL {
                 ShareSheet(activityItems: [randomForestCSVURL])
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RandomForestDataUpdated"))) { notification in
+            print("📡 Received RandomForest data update notification - starting manual refresh...")
+            
+            // Try to use the context from the notification if available
+            if let notificationContext = notification.userInfo?["modelContext"] as? ModelContext {
+                print("🔄 Using notification context for refresh")
+                Task {
+                    await refreshRandomForestPredictionsWithContext(notificationContext)
+                }
+            } else {
+                print("🔄 Using local context for refresh")
+                // Force refresh of RandomForest predictions when updated
+                Task {
+                    // Add a small delay to allow SwiftData to sync
+                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                    await refreshRandomForestPredictions()
+                    
+                    // If still empty, try one more time after another delay
+                    if manualRandomForestPredictions.isEmpty {
+                        print("🔄 First refresh found 0 predictions, trying again...")
+                        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                        await refreshRandomForestPredictions()
+                    }
+                }
+            }
+        }
+        .onAppear {
+            print("👀 SettingsView onAppear - isInitialized: \(isInitialized)")
+            if !isInitialized {
+                Task { 
+                    print("🔄 Initializing SettingsView...")
+                    await viewModel.initialize(with: modelContext)
+                    await refreshRandomForestPredictions()
+                    isInitialized = true
+                    print("✅ SettingsView initialization complete")
+                }
             }
         }
     }

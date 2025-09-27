@@ -37,6 +37,11 @@ class RandomForestCachingService: ObservableObject {
             
             print("📅 Caching timeframe: \(startTime.formatted()) to \(endTime.formatted())")
             
+            // Initialize the batch count to the next available number
+            let existingMax = try fetchRandomForestPredictionCount(modelContext: modelContext)
+            currentBatchCount = existingMax
+            print("🔢 Starting batch count from: \(currentBatchCount)")
+            
             // Fetch existing Random Forest predictions to avoid duplicates
             let existingPredictions = try fetchExistingRandomForestPredictions(modelContext: modelContext, startTime: startTime, endTime: endTime)
             print("📊 Found \(existingPredictions.count) existing Random Forest predictions in timeframe")
@@ -73,11 +78,34 @@ class RandomForestCachingService: ObservableObject {
                     let cachedPrediction = try await createRandomForestPredictionForTime(sampleTime, modelContext: modelContext)
                     
                     if let prediction = cachedPrediction {
+                        print("🔍 About to insert prediction: timestamp=\(prediction.timestamp.formatted()), mmol=\(String(format: "%.2f", prediction.predictionMmol)), count=\(prediction.predictionCount)")
+                        
+                        // Check for potential duplicate before inserting
+                        let countToCheck = prediction.predictionCount
+                        let duplicateCheckDescriptor = FetchDescriptor<RandomForestPrediction>(
+                            predicate: #Predicate<RandomForestPrediction> { p in
+                                p.predictionCount == countToCheck
+                            }
+                        )
+                        let duplicates = try modelContext.fetch(duplicateCheckDescriptor)
+                        if !duplicates.isEmpty {
+                            print("⚠️ Found \(duplicates.count) existing predictions with count \(prediction.predictionCount)")
+                        }
+                        
                         modelContext.insert(prediction)
                         cachedCount += 1
                         lastPredictionTime = sampleTime
                         
-                        print("✅ Cached Random Forest prediction for \(sampleTime.formatted()): \(String(format: "%.1f", prediction.prediction_mmol)) mmol/L")
+                        // Verify the prediction was actually inserted
+                        if modelContext.hasChanges {
+                            print("✅ ModelContext has changes after inserting prediction")
+                        } else {
+                            print("⚠️ ModelContext has NO changes after inserting prediction")
+                        }
+                        
+                        print("✅ Cached Random Forest prediction for \(sampleTime.formatted()): \(String(format: "%.1f", prediction.predictionMmol)) mmol/L")
+                    } else {
+                        print("⚠️ createRandomForestPredictionForTime returned nil for \(sampleTime.formatted())")
                     }
                 } catch {
                     print("⚠️ Failed to create Random Forest prediction for \(sampleTime.formatted()): \(error)")
@@ -85,13 +113,41 @@ class RandomForestCachingService: ObservableObject {
             }
             
             // Save all cached predictions
-            try modelContext.save()
+            print("🔄 About to save \(cachedCount) predictions to database...")
+            print("🔍 ModelContext hasChanges before save: \(modelContext.hasChanges)")
+            
+            do {
+                try modelContext.save()
+                print("💾 ModelContext saved successfully after inserting \(cachedCount) predictions")
+            } catch {
+                print("❌ SAVE ERROR: Failed to save modelContext: \(error)")
+                print("❌ Error details: \(error.localizedDescription)")
+                if let nsError = error as NSError? {
+                    print("❌ Error domain: \(nsError.domain), code: \(nsError.code)")
+                    print("❌ User info: \(nsError.userInfo)")
+                }
+                throw error
+            }
+            
+            // Verify the predictions were actually saved by immediate fetch
+            let verifyDescriptor = FetchDescriptor<RandomForestPrediction>(
+                sortBy: [SortDescriptor(\RandomForestPrediction.timestamp, order: .reverse)]
+            )
+            let verifyPredictions = try modelContext.fetch(verifyDescriptor)
+            print("🔍 Verification fetch found \(verifyPredictions.count) predictions in same context")
             
             // Update published properties
             cachedPredictionCount = try fetchRandomForestPredictionCount(modelContext: modelContext)
             lastCacheResult = "Cached \(cachedCount) new Random Forest predictions. Total: \(cachedPredictionCount)"
             
             print("✅ Random Forest caching complete: \(cachedCount) new predictions cached")
+            
+            // Notify UI that RandomForest data has been updated
+            NotificationCenter.default.post(
+                name: NSNotification.Name("RandomForestDataUpdated"),
+                object: nil
+            )
+            
             return cachedCount
             
         } catch {
@@ -132,8 +188,17 @@ class RandomForestCachingService: ObservableObject {
         // Convert predicted value from mg/dL to mmol/L
         let predictionMmol = predictedValue / 18.0
         
-        // Calculate prediction count
-        let predictionCount = try calculateNextPredictionCount(modelContext: modelContext)
+        // Validate the values before creating the object
+        guard predictionMmol.isFinite && !predictionMmol.isNaN else {
+            print("⚠️ Invalid prediction value: \(predictionMmol) mmol/L for \(timestamp.formatted())")
+            return nil
+        }
+        
+        // Use batch counter for unique prediction count
+        currentBatchCount += 1
+        let predictionCount = currentBatchCount
+        
+        print("🔍 Creating prediction with validated values: mmol=\(String(format: "%.2f", predictionMmol)), count=\(predictionCount)")
         
         // Create the RandomForestPrediction object
         let prediction = RandomForestPrediction(
@@ -181,6 +246,9 @@ class RandomForestCachingService: ObservableObject {
             return 1
         }
     }
+    
+    // Track the count manually to avoid conflicts
+    private var currentBatchCount: Int = 0
     
     private func fetchHistoricalGlucoseData(upTo timestamp: Date, limit: Int) async throws -> [Double] {
         let endTime = timestamp

@@ -3,12 +3,9 @@ import SwiftData
 
 @Model
 final class RandomForestPrediction {
-    var id: UUID
     var timestamp: Date
-    
-    // Random Forest prediction values
-    var prediction_mmol: Double = 0.0
-    var prediction_mgdl: Int = 0
+    var predictionMmol: Double
+    var predictionCount: Int
     
     // Actual blood glucose reading ~20 minutes after prediction
     var actualBG_mmol: Double = 0.0
@@ -23,21 +20,10 @@ final class RandomForestPrediction {
     var lastInsulinEntryTimestamp: Date? = nil
     var timeSinceLastInsulin_minutes: Double = -1.0  // -1 indicates no insulin entry found
     
-    // Sequential prediction number for tracking
-    var predictionCount: Int = 0
-    
     init(timestamp: Date, predictionValue_mmol: Double, predictionCount: Int = 0) {
-        self.id = UUID()
         self.timestamp = timestamp
-        self.prediction_mmol = predictionValue_mmol
-        self.prediction_mgdl = Int(round(predictionValue_mmol * 18.0))
+        self.predictionMmol = predictionValue_mmol
         self.predictionCount = predictionCount
-    }
-    
-    // Helper method to set Random Forest prediction
-    func setPrediction(mmol: Double) {
-        self.prediction_mmol = mmol
-        self.prediction_mgdl = Int(round(mmol * 18.0))
     }
     
     // Helper method to set actual BG reading that occurred after prediction

@@ -42,8 +42,8 @@ class RandomForestCSVExportManager {
             csvLine += ",\(prediction.predictionCount)"
             
             // Add Random Forest prediction values
-            let pred_mmol = String(format: "%.2f", prediction.prediction_mmol)
-            let pred_mgdl = String(prediction.prediction_mgdl)
+            let pred_mmol = String(format: "%.2f", prediction.predictionMmol)
+            let pred_mgdl = String(format: "%.0f", prediction.predictionMmol * 18.0)
             csvLine += ",\(pred_mmol),\(pred_mgdl)"
             
             // Add actual BG reading (20 minutes after prediction)
