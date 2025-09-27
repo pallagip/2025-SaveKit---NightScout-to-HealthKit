@@ -46,17 +46,19 @@ class RandomForestCachingService: ObservableObject {
             let existingPredictions = try fetchExistingRandomForestPredictions(modelContext: modelContext, startTime: startTime, endTime: endTime)
             print("📊 Found \(existingPredictions.count) existing Random Forest predictions in timeframe")
             
-            // Get glucose readings from the time period to use as prediction timestamps
             let glucoseReadings = try await healthKitManager.fetchGlucoseForTimeRange(startDate: startTime, endDate: endTime)
             print("🩸 Found \(glucoseReadings.count) glucose readings for potential predictions")
             
             var cachedCount = 0
             let targetInterval: TimeInterval = 20 * 60 // 20 minutes between predictions
-            
-            // Filter glucose readings to create predictions at reasonable intervals
             var lastPredictionTime: Date? = nil
             
-            for sample in glucoseReadings.sorted(by: { $0.startDate < $1.startDate }) {
+            // Sort glucose readings chronologically to ensure prediction counts are in time order
+            let sortedGlucoseReadings = glucoseReadings.sorted(by: { $0.startDate < $1.startDate })
+            print("📅 Processing \(sortedGlucoseReadings.count) glucose readings in chronological order")
+            
+            // Process glucose readings in chronological order for prediction timestamps
+            for sample in sortedGlucoseReadings {
                 let sampleTime = sample.startDate
                 
                 // Skip if too close to last prediction
@@ -214,6 +216,13 @@ class RandomForestCachingService: ObservableObject {
         prediction.setCarbTiming(lastCarbTimestamp: lastCarbTimestamp, predictionTimestamp: timestamp)
         prediction.setInsulinTiming(lastInsulinTimestamp: lastInsulinTimestamp, predictionTimestamp: timestamp)
         
+        // Debug the insulin timing after setting
+        if let insulinTime = prediction.lastInsulinEntryTimestamp {
+            print("🔍 Insulin timing set: \(insulinTime.formatted()) -> \(String(format: "%.1f", prediction.timeSinceLastInsulin_minutes)) minutes")
+        } else {
+            print("🔍 No insulin timing set for prediction at \(timestamp.formatted())")
+        }
+        
         return prediction
     }
     
@@ -287,11 +296,11 @@ class RandomForestCachingService: ObservableObject {
     }
     
     private func fetchLastCarbTimestamp(before timestamp: Date, hoursBack: Double) async throws -> Date? {
-        return try await healthKitFeatureProvider.fetchLastCarbEntryTimestamp(hoursBack: hoursBack)
+        return try await healthKitFeatureProvider.fetchLastCarbEntryTimestamp(before: timestamp, hoursBack: hoursBack)
     }
     
     private func fetchLastInsulinTimestamp(before timestamp: Date, hoursBack: Double) async throws -> Date? {
-        return try await healthKitFeatureProvider.fetchLastInsulinEntryTimestamp(hoursBack: hoursBack)
+        return try await healthKitFeatureProvider.fetchLastInsulinEntryTimestamp(before: timestamp, hoursBack: hoursBack)
     }
     
     /// Get the count of cached Random Forest predictions
@@ -302,5 +311,13 @@ class RandomForestCachingService: ObservableObject {
             print("⚠️ Error fetching Random Forest prediction count: \(error)")
             return 0
         }
+    }
+    
+    /// Reset the service's internal state after data clearing
+    func resetInternalState() {
+        currentBatchCount = 0
+        cachedPredictionCount = 0
+        lastCacheResult = "Reset: Ready for fresh predictions"
+        print("🔄 RandomForestCachingService: Internal state reset to zero")
     }
 }

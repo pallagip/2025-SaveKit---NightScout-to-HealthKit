@@ -594,6 +594,80 @@ final class HealthKitFeatureProvider: ObservableObject {
         }
     }
     
+    /// Fetch the timestamp of the most recent insulin delivery entry before a specific time
+    /// - Parameters:
+    ///   - beforeTime: Look for insulin entries before this timestamp
+    ///   - hoursBack: Number of hours to look back from beforeTime (default 4 hours)
+    /// - Returns: The timestamp of the last insulin entry before beforeTime, or nil if no entries found
+    func fetchLastInsulinEntryTimestamp(before beforeTime: Date, hoursBack: Double = 4.0) async throws -> Date? {
+        let startDate = beforeTime.addingTimeInterval(-hoursBack * 3600) // Convert hours to seconds
+        
+        let predicate = HKQuery.predicateForSamples(withStart: startDate,
+                                                   end: beforeTime,
+                                                   options: .strictEndDate)
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: bolusSamples,
+                                      predicate: predicate,
+                                      limit: 1,
+                                      sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate,
+                                                                         ascending: false)]) { (_, samples, error) in
+                if let error = error {
+                    print("⚠️ Time-aware insulin entry fetch error: \(error.localizedDescription)")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                guard let sample = samples?.first as? HKQuantitySample else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                let insulinUnits = sample.quantity.doubleValue(for: HKUnit.internationalUnit())
+                print("💉 Time-aware insulin entry before \(beforeTime.formatted()): \(String(format: "%.2f", insulinUnits))U at \(sample.endDate.formatted())")
+                continuation.resume(returning: sample.endDate)
+            }
+            store.execute(query)
+        }
+    }
+    
+    /// Fetch the timestamp of the most recent dietary carbohydrate entry before a specific time
+    /// - Parameters:
+    ///   - beforeTime: Look for carb entries before this timestamp
+    ///   - hoursBack: Number of hours to look back from beforeTime (default 5 hours)
+    /// - Returns: The timestamp of the last carb entry before beforeTime, or nil if no entries found
+    func fetchLastCarbEntryTimestamp(before beforeTime: Date, hoursBack: Double = 5.0) async throws -> Date? {
+        let startDate = beforeTime.addingTimeInterval(-hoursBack * 3600) // Convert hours to seconds
+        
+        let predicate = HKQuery.predicateForSamples(withStart: startDate,
+                                                   end: beforeTime,
+                                                   options: .strictEndDate)
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: carbSamples,
+                                      predicate: predicate,
+                                      limit: 1,
+                                      sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierEndDate,
+                                                                         ascending: false)]) { (_, samples, error) in
+                if let error = error {
+                    print("⚠️ Time-aware carb entry fetch error: \(error.localizedDescription)")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                guard let sample = samples?.first as? HKQuantitySample else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                let carbGrams = sample.quantity.doubleValue(for: HKUnit.gram())
+                print("🍞 Time-aware carb entry before \(beforeTime.formatted()): \(String(format: "%.1f", carbGrams))g at \(sample.endDate.formatted())")
+                continuation.resume(returning: sample.endDate)
+            }
+            store.execute(query)
+        }
+    }
+    
     /// Fetch the most recent heart rate value (in beats per minute)
     /// - Parameter minutesBack: Number of minutes to look back (default 30 minutes)
     /// - Returns: Heart rate in beats per minute, or 70.0 as default if no recent data

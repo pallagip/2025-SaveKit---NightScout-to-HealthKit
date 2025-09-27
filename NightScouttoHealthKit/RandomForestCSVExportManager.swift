@@ -34,12 +34,17 @@ class RandomForestCSVExportManager {
         // Build CSV content
         var csvContent = header + "\r\n"
         
-        for prediction in predictions.sorted(by: { $0.timestamp < $1.timestamp }) {
+        // Sort predictions chronologically and renumber them sequentially for perfect order
+        let sortedPredictions = predictions.sorted(by: { $0.timestamp < $1.timestamp })
+        print("📅 Reordered \(sortedPredictions.count) predictions chronologically for CSV export")
+        
+        for (index, prediction) in sortedPredictions.enumerated() {
             let isoTimestamp = timestampFormatter.string(from: prediction.timestamp)
             var csvLine = isoTimestamp
             
-            // Add prediction count
-            csvLine += ",\(prediction.predictionCount)"
+            // Add sequential prediction count (1-based) ordered by timestamp
+            let sequentialCount = index + 1
+            csvLine += ",\(sequentialCount)"
             
             // Add Random Forest prediction values
             let pred_mmol = String(format: "%.2f", prediction.predictionMmol)
