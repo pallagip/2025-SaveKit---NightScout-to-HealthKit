@@ -1195,7 +1195,7 @@ struct SettingsView: View {
                         do {
                             Button("Cache Random Forest (24h)") {
                                 Task {
-                                    let cached = await randomForestCachingService.cacheRandomForestPredictions(modelContext: modelContext, hoursBack: 24.0)
+                                    let cached = try await randomForestCachingService.cacheRandomForestPredictions(modelContext: modelContext, hoursBack: 24.0)
                                     print("✅ Cached \(cached) Random Forest predictions")
                                 }
                             }
