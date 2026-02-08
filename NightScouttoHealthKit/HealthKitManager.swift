@@ -116,13 +116,14 @@ class HealthKitManager {
         
         print("🔍 Found \(existingSamples.count) existing samples in HealthKit for this time range")
         
-        // Extract timestamps of existing samples
-        let existingTimestamps = Set(existingSamples.map { $0.startDate.timeIntervalSince1970 })
+        // Extract timestamps of existing samples with rounding for robust matching
+        // HealthKit samples can carry sub-second precision; Nightscout timestamps can be seconds or ms-derived.
+        let existingSeconds = Set(existingSamples.map { Int($0.startDate.timeIntervalSince1970.rounded()) })
         
-        // Filter out entries that already exist (match by timestamp)
+        // Filter out entries that already exist (match by rounded second, with +/- 1s tolerance)
         let uniqueEntries = entries.filter { entry in
-            let timestamp = entry.date.timeIntervalSince1970
-            return !existingTimestamps.contains(timestamp)
+            let t = Int(entry.date.timeIntervalSince1970.rounded())
+            return !(existingSeconds.contains(t) || existingSeconds.contains(t - 1) || existingSeconds.contains(t + 1))
         }
         
         print("🔍 After filtering: \(uniqueEntries.count) entries are new and \(entries.count - uniqueEntries.count) already exist")

@@ -472,7 +472,7 @@ struct BGPredictionView: View {
                     
                     print("🎯 Individual RandomForest prediction caching completed, sending notification...")
                     
-                    // Notify that RandomForest data has been updated for CSV export
+                    // Notify that Random Forest data has been updated for CSV export
                     await MainActor.run {
                         NotificationCenter.default.post(
                             name: NSNotification.Name("RandomForestDataUpdated"),
@@ -1020,6 +1020,11 @@ struct SettingsView: View {
                     } else {
                         viewModel.lastSyncResult = "No new data found in the last 24 hours"
                     }
+                    
+                    // If nothing saved, check for future-dated entries as a diagnostic
+                    if savedCount == 0 {
+                        await scanForFutureDatedGlucose()
+                    }
                 }
             } label: {
                 if viewModel.syncInProgress {
@@ -1112,6 +1117,16 @@ struct SettingsView: View {
             .foregroundColor(.white)
             .cornerRadius(10)
             .disabled(viewModel.syncInProgress)
+            
+            // Inserted new button for scanning future-dated glucose samples
+            Button {
+                Task { await scanForFutureDatedGlucose() }
+            } label: {
+                Text("Scan HealthKit for Future-Dated Glucose")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.blue)
 
             // Export predictions button
             Button {
@@ -1193,12 +1208,6 @@ struct SettingsView: View {
                 Button {
                     Task {
                         do {
-                            Button("Cache Random Forest (24h)") {
-                                Task {
-                                    let cached = try await randomForestCachingService.cacheRandomForestPredictions(modelContext: modelContext, hoursBack: 24.0)
-                                    print("✅ Cached \(cached) Random Forest predictions")
-                                }
-                            }
                             // Export Random Forest predictions to CSV
                             let fileURL = try await RandomForestCSVExportManager.shared.exportRandomForestPredictions(
                                 predictions: randomForestPredictionsForExport,
@@ -1421,6 +1430,7 @@ struct SettingsView: View {
                 .cornerRadius(8)
             }
             .padding()
+            }
         }
         .sheet(isPresented: $showingShareSheet) {
             if let csvURL = csvURL {
@@ -1471,7 +1481,160 @@ struct SettingsView: View {
             }
         }
     }
-}
+    
+    // MARK: - Scan for Future-Dated Glucose Samples
+    @MainActor
+    private func scanForFutureDatedGlucose() async {
+        print("🔎 Scanning HealthKit for future-dated glucose samples (next 100 years)...")
+        do {
+            // Ensure authorization
+            try await HealthKitManager().requestAuthorization()
+
+            let healthStore = HKHealthStore()
+            guard let type = HKObjectType.quantityType(forIdentifier: .bloodGlucose) else {
+                print("❌ Blood glucose type unavailable")
+                return
+            }
+
+            let now = Date()
+            // Scan 100 years into the future to catch distant dates like 2081
+            let future = now.addingTimeInterval(60 * 60 * 24 * 365 * 100)
+            let predicate = HKQuery.predicateForSamples(withStart: now, end: future, options: [])
+
+            let query = HKSampleQuery(sampleType: type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
+                if let error = error {
+                    print("❌ Future scan failed: \(error)")
+                    return
+                }
+                let quantitySamples = (samples as? [HKQuantitySample]) ?? []
+                print("📈 Future-dated samples found: \(quantitySamples.count)")
+                
+                if !quantitySamples.isEmpty {
+                    let unit = HKUnit(from: "mg/dL")
+                    let preview = quantitySamples.prefix(5)
+                    for s in preview {
+                        let value = s.quantity.doubleValue(for: unit)
+                        print("   • \(s.startDate) — \(String(format: "%.1f", value)) mg/dL")
+                    }
+                    print("⚠️ Detected future-dated glucose. Deleting \(quantitySamples.count) samples...")
+                    
+                    healthStore.delete(quantitySamples) { success, deleteError in
+                        if success {
+                            print("✅ Successfully deleted \(quantitySamples.count) future-dated samples.")
+                        } else {
+                            print("❌ Failed to delete samples: \(String(describing: deleteError))")
+                        }
+                    }
+                } else {
+                    print("✅ No future-dated glucose samples detected.")
+                }
+            }
+            healthStore.execute(query)
+        } catch {
+            print("❌ Authorization or scan error: \(error)")
+        }
+    }
+
+    // MARK: - Reset CSV Data Function
+    @MainActor
+    private func resetRandomForestCSVData() async {
+        print("🗑️ === STARTING COMPREHENSIVE RANDOM FOREST DATA RESET ===")
+        
+        // Method 1: Try direct SwiftData deletion
+        await attemptSwiftDataDeletion()
+        
+        // Method 2: Try batch deletion using NSBatchDeleteRequest (if available)
+        await attemptBatchDeletion()
+        
+        // Method 3: Reset service state regardless
+        randomForestCachingService.resetInternalState()
+        
+        // Method 4: Clear manual arrays
+        manualRandomForestPredictions.removeAll()
+        
+        // Method 5: Force UI refresh
+        randomForestRefreshID = UUID()
+        
+        // Send notification to refresh UI
+        NotificationCenter.default.post(
+            name: NSNotification.Name("RandomForestDataUpdated"), 
+            object: nil
+        )
+        
+        print("🔄 All reset methods completed. Next prediction should start from count 1.")
+        print("🗑️ === RESET PROCESS FINISHED ===")
+    }
+    
+    @MainActor
+    private func attemptSwiftDataDeletion() async {
+        do {
+            print("📋 Method 1: SwiftData deletion...")
+            
+            let fetchDescriptor = FetchDescriptor<RandomForestPrediction>(
+                sortBy: [SortDescriptor(\RandomForestPrediction.timestamp, order: .forward)]
+            )
+            let allPredictions = try modelContext.fetch(fetchDescriptor)
+            
+            print("🔍 Found \(allPredictions.count) predictions via SwiftData fetch")
+            
+            if allPredictions.isEmpty {
+                print("ℹ️ No predictions found via SwiftData")
+                return
+            }
+            
+            // Delete all predictions
+            for prediction in allPredictions {
+                modelContext.delete(prediction)
+            }
+            
+            print("🔄 Saving context after marking \(allPredictions.count) for deletion...")
+            try modelContext.save()
+            
+            // Immediate verification
+            let verifyPredictions = try modelContext.fetch(fetchDescriptor)
+            print("✅ SwiftData deletion: \(verifyPredictions.count) predictions remain")
+            
+        } catch {
+            print("❌ SwiftData deletion failed: \(error)")
+        }
+    }
+    
+    @MainActor
+    private func attemptBatchDeletion() async {
+        do {
+            print("📋 Method 2: Attempting alternative deletion...")
+            
+            // Try creating a new fetch and delete again
+            let freshDescriptor = FetchDescriptor<RandomForestPrediction>()
+            let freshPredictions = try modelContext.fetch(freshDescriptor)
+            
+            print("🔍 Fresh fetch found \(freshPredictions.count) predictions")
+            
+            if freshPredictions.count > 0 {
+                print("🗑️ Attempting to delete \(freshPredictions.count) remaining predictions...")
+                
+                for prediction in freshPredictions {
+                    print("🗑️ Deleting: Count \(prediction.predictionCount) at \(prediction.timestamp.formatted())")
+                    modelContext.delete(prediction)
+                }
+                
+                try modelContext.save()
+                print("💾 Batch deletion save completed")
+                
+                // Final check
+                let finalPredictions = try modelContext.fetch(freshDescriptor)
+                print("🔍 Final count after batch deletion: \(finalPredictions.count)")
+            }
+            
+        } catch {
+            print("❌ Batch deletion failed: \(error)")
+        }
+    }
+
+
+
+} // End of SettingsView
+
 
 // MARK: - Share Sheet
 
@@ -1590,101 +1753,6 @@ class ContentViewModel: ObservableObject {
     }
 }
     
-    // MARK: - Reset CSV Data Function
-    @MainActor
-    private func resetRandomForestCSVData() async {
-        print("🗑️ === STARTING COMPREHENSIVE RANDOM FOREST DATA RESET ===")
-        
-        // Method 1: Try direct SwiftData deletion
-        await attemptSwiftDataDeletion()
-        
-        // Method 2: Try batch deletion using NSBatchDeleteRequest (if available)
-        await attemptBatchDeletion()
-        
-        // Method 3: Reset service state regardless
-        randomForestCachingService.resetInternalState()
-        
-        // Method 4: Clear manual arrays
-        manualRandomForestPredictions.removeAll()
-        
-        // Method 5: Force UI refresh
-        randomForestRefreshID = UUID()
-        
-        // Send notification to refresh UI
-        NotificationCenter.default.post(
-            name: NSNotification.Name("RandomForestDataUpdated"), 
-            object: nil
-        )
-        
-        print("🔄 All reset methods completed. Next prediction should start from count 1.")
-        print("🗑️ === RESET PROCESS FINISHED ===")
-    }
-    
-    @MainActor
-    private func attemptSwiftDataDeletion() async {
-        do {
-            print("📋 Method 1: SwiftData deletion...")
-            
-            let fetchDescriptor = FetchDescriptor<RandomForestPrediction>(
-                sortBy: [SortDescriptor(\RandomForestPrediction.timestamp, order: .forward)]
-            )
-            let allPredictions = try modelContext.fetch(fetchDescriptor)
-            
-            print("🔍 Found \(allPredictions.count) predictions via SwiftData fetch")
-            
-            if allPredictions.isEmpty {
-                print("ℹ️ No predictions found via SwiftData")
-                return
-            }
-            
-            // Delete all predictions
-            for prediction in allPredictions {
-                modelContext.delete(prediction)
-            }
-            
-            print("🔄 Saving context after marking \(allPredictions.count) for deletion...")
-            try modelContext.save()
-            
-            // Immediate verification
-            let verifyPredictions = try modelContext.fetch(fetchDescriptor)
-            print("✅ SwiftData deletion: \(verifyPredictions.count) predictions remain")
-            
-        } catch {
-            print("❌ SwiftData deletion failed: \(error)")
-        }
-    }
-    
-    @MainActor
-    private func attemptBatchDeletion() async {
-        do {
-            print("📋 Method 2: Attempting alternative deletion...")
-            
-            // Try creating a new fetch and delete again
-            let freshDescriptor = FetchDescriptor<RandomForestPrediction>()
-            let freshPredictions = try modelContext.fetch(freshDescriptor)
-            
-            print("🔍 Fresh fetch found \(freshPredictions.count) predictions")
-            
-            if freshPredictions.count > 0 {
-                print("🗑️ Attempting to delete \(freshPredictions.count) remaining predictions...")
-                
-                for prediction in freshPredictions {
-                    print("🗑️ Deleting: Count \(prediction.predictionCount) at \(prediction.timestamp.formatted())")
-                    modelContext.delete(prediction)
-                }
-                
-                try modelContext.save()
-                print("💾 Batch deletion save completed")
-                
-                // Final check
-                let finalPredictions = try modelContext.fetch(freshDescriptor)
-                print("🔍 Final count after batch deletion: \(finalPredictions.count)")
-            }
-            
-        } catch {
-            print("❌ Batch deletion failed: \(error)")
-        }
-    }
 
-} // End of SettingsView
+
 
