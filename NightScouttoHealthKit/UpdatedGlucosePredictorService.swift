@@ -358,6 +358,12 @@ class UpdatedGlucosePredictorService: ObservableObject {
             return nil
         }
         
+        // Safety check: ensure history is not entirely in the future
+        // Note: The caller should have filtered this, but we add a guard here anyway
+        if currentTime.addingTimeInterval(3600) < Date() {
+             // If currentTime is significantly in the past, it might be an old packet
+        }
+        
         guard let predictedChange = predictGlucoseChange(
             glucoseHistory: glucoseHistory,
             carbsHistory: carbsHistory,

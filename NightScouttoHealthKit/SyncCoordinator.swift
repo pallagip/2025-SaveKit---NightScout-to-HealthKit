@@ -61,7 +61,9 @@ class SyncCoordinator {
     /// - Returns: SyncResult with details about the sync operation
     func performSync(minutes: Int = 25) async throws -> SyncResult {
         let syncStartTime = Date()
-        print("🔄 Starting sync at: \(formatTime(syncStartTime)) (\(syncStartTime))")
+        let utcFormatter = ISO8601DateFormatter()
+        utcFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+        print("🔄 Starting sync at: \(formatTime(syncStartTime)) (Local) | \(utcFormatter.string(from: syncStartTime)) (UTC)")
         
         do {
             // Request HealthKit authorization
@@ -69,9 +71,26 @@ class SyncCoordinator {
             try await healthKitManager.requestAuthorization()
             print("✅ HealthKit authorization granted")
             
-            // Fetch glucose data from Nightscout with specified time window
-            print("📥 Fetching \(minutes) minutes of glucose data from Nightscout...")
-            let entries = try await nightscoutService.fetchGlucoseData(minutes: minutes)
+            // Clean up any remaining future-dated samples from previous bugs
+            _ = try? await healthKitManager.deleteFutureGlucoseSamples()
+            
+            // Determine the sync window (catch-up if needed)
+            var fetchMinutes = minutes
+            if let latestDate = await healthKitManager.fetchLatestGlucoseDate() {
+                let minutesSinceLastSync = Int(Date().timeIntervalSince(latestDate) / 60)
+                if minutesSinceLastSync > minutes {
+                    fetchMinutes = min(minutesSinceLastSync + 5, 2880) // Fetch up to 48 hours catch-up
+                    print("🔄 Catch-up sync: Fetching \(fetchMinutes) minutes to cover gap since \(latestDate)")
+                }
+            } else {
+                // If HealthKit is empty, fetch a larger window (24 hours) to get started
+                fetchMinutes = max(minutes, 1440)
+                print("🔄 Fresh sync: Fetching \(fetchMinutes) minutes as HealthKit is empty or has no glucose data")
+            }
+            
+            // Fetch glucose data from Nightscout
+            print("📥 Fetching \(fetchMinutes) minutes of glucose data from Nightscout...")
+            let entries = try await nightscoutService.fetchGlucoseData(minutes: fetchMinutes)
             
             // Check if we have data
             guard !entries.isEmpty else {
@@ -83,8 +102,8 @@ class SyncCoordinator {
             print("📊 Fetched \(entries.count) entries")
             
             if let firstEntry = entries.first, let lastEntry = entries.last {
-                print("🕒 Earliest entry: \(formatTime(firstEntry.date)) - \(Int(firstEntry.sgv)) mg/dL")
-                print("🕒 Latest entry: \(formatTime(lastEntry.date)) - \(Int(lastEntry.sgv)) mg/dL")
+                print("🕒 Latest entry: \(formatTime(firstEntry.date)) - \(Int(firstEntry.sgv)) mg/dL")
+                print("🕒 Earliest entry: \(formatTime(lastEntry.date)) - \(Int(lastEntry.sgv)) mg/dL")
             }
             
             // Save to HealthKit and get count of newly saved entries
@@ -136,22 +155,39 @@ class SyncCoordinator {
             print("📥 Fetching \(minutes) minutes of glucose data from Nightscout server...")
             let entries = try await nightscoutService.fetchGlucoseData(minutes: minutes)
             
-            // Check if we have data
-            guard !entries.isEmpty else {
-                print("⚠️ No glucose data available in the specified time range")
+            // --- NEW: Intra-batch Deduplication (2.5-minute window) ---
+            let sortedEntries = entries.sorted { $0.date < $1.date }
+            var deduplicatedBatch = [Entry]()
+            for entry in sortedEntries {
+                if let lastKept = deduplicatedBatch.last {
+                    if entry.date.timeIntervalSince(lastKept.date) < 150 {
+                        if lastKept._id == nil && entry._id != nil {
+                            deduplicatedBatch[deduplicatedBatch.count - 1] = entry
+                        }
+                        continue
+                    }
+                }
+                deduplicatedBatch.append(entry)
+            }
+            let entriesToProcess = deduplicatedBatch
+            // ---------------------------------------------------------
+            
+            // Check if we have data after deduplication
+            guard !entriesToProcess.isEmpty else {
+                print("⚠️ No glucose data available after intra-batch deduplication")
                 return SyncResult(
                     newEntries: 0,
-                    totalFetched: 0,
-                    message: "No new data available from Nightscout server"
+                    totalFetched: entries.count,
+                    message: "No new data after deduplication"
                 )
             }
             
             // Log what we found
-            print("📊 Fetched \(entries.count) entries from server")
+            print("📊 Fetched \(entries.count) entries from server (\(entriesToProcess.count) after intra-batch deduplication)")
             
             if let firstEntry = entries.first, let lastEntry = entries.last {
-                print("🕒 Earliest entry: \(formatTime(firstEntry.date)) - \(Int(firstEntry.sgv)) mg/dL")
-                print("🕒 Latest entry: \(formatTime(lastEntry.date)) - \(Int(lastEntry.sgv)) mg/dL")
+                print("🕒 Latest entry: \(formatTime(firstEntry.date)) - \(Int(firstEntry.sgv)) mg/dL")
+                print("🕒 Earliest entry: \(formatTime(lastEntry.date)) - \(Int(lastEntry.sgv)) mg/dL")
             }
             
             // Save entries directly to SwiftData cache
@@ -160,11 +196,15 @@ class SyncCoordinator {
             var savedCount = 0
             var skippedCount = 0
             
-            for entry in entries {
-                // Check if entry already exists in cache
+            for entry in entriesToProcess {
+                // Check if entry already exists in cache using a 2.5-minute window
+                let entryTimestamp = entry.date.timeIntervalSince1970
+                let startDate = Date(timeIntervalSince1970: entryTimestamp - 150)
+                let endDate = Date(timeIntervalSince1970: entryTimestamp + 150)
+                
                 let fetchDescriptor = FetchDescriptor<HealthKitBGCache>(
                     predicate: #Predicate<HealthKitBGCache> { cache in
-                        cache.timestamp == entry.date
+                        cache.timestamp >= startDate && cache.timestamp <= endDate
                     }
                 )
                 
@@ -203,7 +243,7 @@ class SyncCoordinator {
             let syncDuration = Date().timeIntervalSince(syncStartTime)
             print("✅ Server sync completed in \(String(format: "%.2f", syncDuration)) seconds")
             print("⏱️ Time: \(formatTime(Date()))")
-            print("📊 Processed \(entries.count) entries from server")
+            print("📊 Processed \(entriesToProcess.count) entries from server")
             
             // Return result with saved entries
             return SyncResult(

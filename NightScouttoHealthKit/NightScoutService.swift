@@ -8,14 +8,19 @@
 import Foundation
 
 struct Entry: Codable {
-    let date: Date
+    var date: Date
     let sgv: Double
-    // Additional fields as needed
+    let _id: String?
+    let device: String?
+    let type: String?
     
     // Custom CodingKeys to handle the JSON format from Nightscout
     private enum CodingKeys: String, CodingKey {
-        case date = "date"  // or "dateString" depending on the API
+        case date = "date"
         case sgv = "sgv"
+        case _id = "_id"
+        case device = "device"
+        case type = "type"
     }
     
     // Custom initializer to handle the date formats from Nightscout
@@ -61,6 +66,11 @@ struct Entry: Codable {
                 )
             )
         }
+        
+        // Handle _id, device, and type
+        self._id = try? container.decode(String.self, forKey: ._id)
+        self.device = try? container.decode(String.self, forKey: .device)
+        self.type = try? container.decode(String.self, forKey: .type)
     }
 }
 
@@ -138,12 +148,14 @@ class NightscoutService {
         let minutesAgo = now.addingTimeInterval(-Double(minutes * 60))
         let millisSinceEpoch = Int(minutesAgo.timeIntervalSince1970 * 1000)
         
+        let millisNow = Int(now.timeIntervalSince1970 * 1000)
+        
         // Build URL with query parameters
         var components = URLComponents(url: baseURL.appendingPathComponent("api/v1/entries.json"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "find[date][$gte]", value: "\(millisSinceEpoch)"),
-            URLQueryItem(name: "sort$desc", value: "date"),
-            URLQueryItem(name: "count", value: "1000")  // Increased from default (usually 10) to ensure we get all entries
+            URLQueryItem(name: "sort[date]", value: "-1"),
+            URLQueryItem(name: "count", value: "5000")
         ]
         
         guard let url = components.url else {
@@ -159,7 +171,7 @@ class NightscoutService {
         request.setValue(apiToken, forHTTPHeaderField: "API-TOKEN")
         
         // Log the outgoing request and query parameters
-        print("🔍 FETCH REQUEST: \(minutes) minutes of data since \(minutesAgo)")
+        print("🔍 FETCH REQUEST: \(minutes) minutes since \(millisSinceEpoch) (\(minutesAgo)) up to \(millisNow) (\(now))")
         NetworkLogger.log(request: request)
         
         let startTime = Date()
@@ -186,7 +198,50 @@ class NightscoutService {
         
         // Create JSON decoder with appropriate strategies
         let decoder = JSONDecoder()
-        return try decoder.decode([Entry].self, from: data)
+        let allEntries = try decoder.decode([Entry].self, from: data)
+        let calendar = Calendar.current
+        
+        // --- DATA PRIORITIZATION (JUNK SUPPRESSION) ---
+        let realEntries = allEntries.filter { 
+            let year = calendar.component(.year, from: $0.date)
+            return year >= 2024 && year <= 2027 
+        }
+        
+        let junkEntries = allEntries.filter { calendar.component(.year, from: $0.date) == 2081 }
+        
+        var processedEntries: [Entry] = []
+        
+        if !realEntries.isEmpty {
+            // prioritize real data, discard junk entirely
+            print("✅ Real data detected (\(realEntries.count) samples). Discarding \(junkEntries.count) junk entries.")
+            processedEntries = realEntries
+        } else if !junkEntries.isEmpty {
+            // fallback to relative mapping ONLY if no real data exists
+            if let absoluteLatestJunkDate = junkEntries.map({ $0.date }).max() {
+                print("⏲️ No real data. Falling back to Relative Mapping for \(junkEntries.count) junk samples.")
+                processedEntries = junkEntries.map { entry -> Entry in
+                    var mutableEntry = entry
+                    let intervalFromPeak = entry.date.timeIntervalSince(absoluteLatestJunkDate)
+                    mutableEntry.date = now.addingTimeInterval(intervalFromPeak)
+                    return mutableEntry
+                }
+            }
+        } else {
+            processedEntries = allEntries
+        }
+        
+        // Final cleaning: Ensure descending order and filter future drifts
+        let filterCutoff = now.addingTimeInterval(60)
+        let finalEntries = processedEntries
+            .filter { $0.date <= filterCutoff }
+            .sorted(by: { $0.date > $1.date })
+        
+        if let latest = finalEntries.first {
+            let src = calendar.component(.year, from: latest.date) == 2081 ? "JUNK-MAPPED" : "REAL"
+            print("📊 Latest Sync Entry: [\(Int(latest.sgv)) mg/dL @ \(latest.date)] Source: \(src)")
+        }
+        
+        return finalEntries
     }
     
     func fetchTreatments(hours: Int = 24) async throws -> [Treatment] {
@@ -195,11 +250,13 @@ class NightscoutService {
         let hoursAgo = now.addingTimeInterval(-Double(hours * 3600))
         let millisSinceEpoch = Int(hoursAgo.timeIntervalSince1970 * 1000)
         
+        let millisNow = Int(now.timeIntervalSince1970 * 1000)
+        
         // Build URL with query parameters for treatments
         var components = URLComponents(url: baseURL.appendingPathComponent("api/v1/treatments.json"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "find[date][$gte]", value: "\(millisSinceEpoch)"),
-            URLQueryItem(name: "sort$desc", value: "date"),
+            URLQueryItem(name: "sort[date]", value: "-1"),
             URLQueryItem(name: "count", value: "1000")  // Get all treatments in timeframe
         ]
         
@@ -243,6 +300,16 @@ class NightscoutService {
         
         // Create JSON decoder with appropriate strategies
         let decoder = JSONDecoder()
-        return try decoder.decode([Treatment].self, from: data)
+        let allTreatments = try decoder.decode([Treatment].self, from: data)
+        
+        // Critical: Filter out future-dated treatments
+        let filterCutoff = Date().addingTimeInterval(60)
+        let validTreatments = allTreatments.filter { $0.date <= filterCutoff }
+        
+        if validTreatments.count < allTreatments.count {
+            print("✂️ Filtered out \(allTreatments.count - validTreatments.count) future-dated treatments from Nightscout")
+        }
+        
+        return validTreatments
     }
 }

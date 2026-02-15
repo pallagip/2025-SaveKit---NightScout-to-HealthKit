@@ -35,13 +35,50 @@ class HealthKitManager {
         let glucoseType = HKQuantityType.quantityType(forIdentifier: .bloodGlucose)!
         let unit = HKUnit(from: "mg/dL")
 
-        // Filter entries to only include those with valid glucose readings
-        let validEntries = entries.filter { entry in
+        // Filter entries to only include those with valid glucose readings and NOT in the future
+        let now = Date()
+        let filterCutoff = now.addingTimeInterval(60) // 1 minute buffer for clock drift
+        
+        var validEntries = entries.filter { entry in
             let validRange = 40.0...400.0
-            return validRange.contains(entry.sgv)
+            let isReadingValid = validRange.contains(entry.sgv)
+            let isDateValid = entry.date <= filterCutoff
+            return isReadingValid && isDateValid
         }
         
-        print("🏥 Found \(validEntries.count) valid glucose readings (filtered out \(entries.count - validEntries.count) invalid readings)")
+        let futureFilteredCount = entries.filter { $0.date > filterCutoff }.count
+        if futureFilteredCount > 0 {
+            print("✂️ Filtered out \(futureFilteredCount) future-dated readings before saving to HealthKit")
+        }
+        
+        // --- NEW: Intra-batch Deduplication (2.5-minute window) ---
+        // Sort entries by date to perform Sequential Deduplication
+        let sortedEntries = validEntries.sorted { $0.date < $1.date }
+        var deduplicatedBatch = [Entry]()
+        
+        for entry in sortedEntries {
+            if let lastKept = deduplicatedBatch.last {
+                let timeDiff = entry.date.timeIntervalSince(lastKept.date)
+                // If less than 150 seconds apart (2.5 mins), it's a duplicate
+                if timeDiff < 150 {
+                    // Keep the one with an ID if the previous one didn't have one
+                    if lastKept._id == nil && entry._id != nil {
+                        deduplicatedBatch[deduplicatedBatch.count - 1] = entry
+                    }
+                    continue
+                }
+            }
+            deduplicatedBatch.append(entry)
+        }
+        
+        let batchDuplicateCount = validEntries.count - deduplicatedBatch.count
+        if batchDuplicateCount > 0 {
+            print("✂️ Removed \(batchDuplicateCount) intra-batch duplicates within 150s window")
+        }
+        validEntries = deduplicatedBatch
+        // ---------------------------------------------------------
+        
+        print("🏥 Found \(validEntries.count) valid glucose readings (filtered out \(entries.count - validEntries.count) invalid, future, or batch-duplicate readings)")
         
         if validEntries.isEmpty {
             print("⚠️ No valid glucose readings to save")
@@ -64,13 +101,22 @@ class HealthKitManager {
             // For debugging
             let dateFormatter = DateFormatter()
             dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-            print("📊 Creating sample: \(entry.sgv) mg/dL at \(dateFormatter.string(from: entry.date))")
+            print("📊 Creating sample: \(entry.sgv) mg/dL at \(dateFormatter.string(from: entry.date)) (ID: \(entry._id ?? "none"))")
+            
+            // Add metadata including the original Nightscout ID
+            var metadata: [String: Any] = [
+                HKMetadataKeyWasUserEntered: false
+            ]
+            if let nsId = entry._id {
+                metadata[HKMetadataKeyExternalUUID] = nsId
+            }
             
             // Using the original timestamp from Nightscout for both start and end
             return HKQuantitySample(type: glucoseType,
                                     quantity: quantity,
                                     start: entry.date,
-                                    end: entry.date)
+                                    end: entry.date,
+                                    metadata: metadata)
         }
 
         print("🏥 Saving \(samples.count) unique samples to HealthKit...")
@@ -102,7 +148,10 @@ class HealthKitManager {
         
         // Add a small buffer to ensure we capture all potential matches
         let startDate = earliestDate.addingTimeInterval(-1) // 1 second before
-        let endDate = latestDate.addingTimeInterval(1)     // 1 second after
+        
+        // Don't check beyond current time, as we just filtered out future entries
+        let latestDateInBatch = latestDate
+        let endDate = min(latestDateInBatch, Date()).addingTimeInterval(1)     // max current time + 1s
         
         print("🔍 Checking for existing entries between \(startDate) and \(endDate)")
         
@@ -117,12 +166,16 @@ class HealthKitManager {
         print("🔍 Found \(existingSamples.count) existing samples in HealthKit for this time range")
         
         // Extract timestamps of existing samples
-        let existingTimestamps = Set(existingSamples.map { $0.startDate.timeIntervalSince1970 })
+        let existingSamplesSorted = existingSamples.sorted { $0.startDate < $1.startDate }
         
-        // Filter out entries that already exist (match by timestamp)
+        // Filter out entries that already exist (check for any existing sample within 150s)
         let uniqueEntries = entries.filter { entry in
-            let timestamp = entry.date.timeIntervalSince1970
-            return !existingTimestamps.contains(timestamp)
+            // Use binary search or simple find for efficiency if batch is large
+            // But since batches are usually < 1000, we can use a simple check
+            let existsInRange = existingSamplesSorted.contains { existing in
+                abs(existing.startDate.timeIntervalSince(entry.date)) < 150
+            }
+            return !existsInRange
         }
         
         print("🔍 After filtering: \(uniqueEntries.count) entries are new and \(entries.count - uniqueEntries.count) already exist")
@@ -159,6 +212,68 @@ class HealthKitManager {
             
             healthStore.execute(query)
         }
+    }
+    
+    /// Fetches the date of the most recent glucose sample in HealthKit (ignoring future dates)
+    func fetchLatestGlucoseDate() async -> Date? {
+        let glucoseType = HKQuantityType.quantityType(forIdentifier: .bloodGlucose)!
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+        
+        // Critical: Only look at samples up to 'now + 1 minute' to ignore future-dated samples
+        let predicate = HKQuery.predicateForSamples(withStart: nil, end: Date().addingTimeInterval(60), options: .strictEndDate)
+        
+        return await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: glucoseType,
+                predicate: predicate,
+                limit: 1,
+                sortDescriptors: [sortDescriptor]
+            ) { _, samples, error in
+                if let error = error {
+                    print("⚠️ Error fetching latest glucose date: \(error.localizedDescription)")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                let latestDate = (samples as? [HKQuantitySample])?.first?.startDate
+                continuation.resume(returning: latestDate)
+            }
+            
+            healthStore.execute(query)
+        }
+    }
+    
+    /// Finds and deletes glucose samples with future dates (e.g. from the '2081' bug)
+    func deleteFutureGlucoseSamples() async throws -> Int {
+        let glucoseType = HKQuantityType.quantityType(forIdentifier: .bloodGlucose)!
+        
+        // Find everything more than 1 hour in the future
+        let oneHourFromNow = Date().addingTimeInterval(3600)
+        let predicate = HKQuery.predicateForSamples(withStart: oneHourFromNow, end: nil, options: .strictStartDate)
+        
+        let samplesToDelete = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[HKSample], Error>) in
+            let query = HKSampleQuery(
+                sampleType: glucoseType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: nil
+            ) { _, samples, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: samples ?? [])
+                }
+            }
+            healthStore.execute(query)
+        }
+        
+        if !samplesToDelete.isEmpty {
+            print("✂️ Found \(samplesToDelete.count) future-dated samples to delete")
+            try await healthStore.delete(samplesToDelete)
+            print("✅ Successfully deleted \(samplesToDelete.count) future-dated samples")
+        }
+        
+        return samplesToDelete.count
     }
     
     /// Fetch recent glucose readings from HealthKit for comparison (helpful for debugging)
@@ -310,5 +425,28 @@ class HealthKitManager {
         }
         
         return nil
+    }
+    
+    /// Deletes all glucose samples from HealthKit that were created by this app
+    func deleteAllGlucoseSamples() async throws -> Int {
+        let glucoseType = HKQuantityType.quantityType(forIdentifier: .bloodGlucose)!
+        
+        // Predicate to ONLY target data created by this app
+        let sourcePredicate = HKQuery.predicateForObjects(from: .default())
+        // Combine with a time predicate just to be safe (entire history)
+        let timePredicate = HKQuery.predicateForSamples(withStart: .distantPast, end: .distantFuture, options: .strictEndDate)
+        let finalPredicate = NSCompoundPredicate(andPredicateWithSubpredicates: [sourcePredicate, timePredicate])
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            healthStore.deleteObjects(of: glucoseType, predicate: finalPredicate) { success, deletedCount, error in
+                if let error = error {
+                    print("❌ HealthKit deletion failed: \(error)")
+                    continuation.resume(throwing: error)
+                } else {
+                    print("✅ Successfully deleted \(deletedCount) glucose samples created by SaveKit")
+                    continuation.resume(returning: deletedCount)
+                }
+            }
+        }
     }
 }

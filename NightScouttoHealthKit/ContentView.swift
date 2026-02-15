@@ -1046,6 +1046,34 @@ struct SettingsView: View {
             
             Divider().padding(.vertical)
             
+            // Delete All HealthKit Data button
+            Button {
+                Task { @MainActor in
+                    viewModel.syncInProgress = true
+                    do {
+                        let deletedCount = try await HealthKitManager().deleteAllGlucoseSamples()
+                        viewModel.lastSyncResult = "Successfully deleted \(deletedCount) HealthKit glucose samples"
+                    } catch {
+                        print("❌ Failed to delete HealthKit data: \(error)")
+                        viewModel.lastSyncResult = "Failed to delete HealthKit data: \(error.localizedDescription)"
+                    }
+                    viewModel.syncInProgress = false
+                }
+            } label: {
+                if viewModel.syncInProgress {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                        .scaleEffect(0.8)
+                } else {
+                    Text("Delete All HealthKit Data")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .buttonStyle(.bordered)
+            .tint(.red)
+            .padding(.top, 8)
+            .disabled(viewModel.syncInProgress)
+
             // HealthKit BG Cache Sync button
             Button {
                 Task { @MainActor in
