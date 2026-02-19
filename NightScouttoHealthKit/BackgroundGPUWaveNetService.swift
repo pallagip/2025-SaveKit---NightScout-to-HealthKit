@@ -3,7 +3,7 @@
 //  NightScouttoHealthKit
 //
 //  Created for PatrickPallagi on 2025-08-03
-//  Background GPU-accelerated WaveNet prediction service triggered by OneSignal notifications
+//  Background GPU-accelerated WaveNet prediction service
 //
 
 import Foundation
@@ -11,7 +11,6 @@ import CoreML
 import SwiftData
 import BackgroundTasks
 import UserNotifications
-import OneSignalFramework
 
 @MainActor
 class BackgroundGPUWaveNetService: NSObject, ObservableObject {

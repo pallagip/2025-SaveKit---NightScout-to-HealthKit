@@ -13,6 +13,7 @@ struct Entry: Codable {
     let _id: String?
     let device: String?
     let type: String?
+    let mills: Int? // Explicitly decode mills as requested
     
     // Custom CodingKeys to handle the JSON format from Nightscout
     private enum CodingKeys: String, CodingKey {
@@ -21,14 +22,19 @@ struct Entry: Codable {
         case _id = "_id"
         case device = "device"
         case type = "type"
+        case mills = "mills"
     }
     
     // Custom initializer to handle the date formats from Nightscout
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         
-        // Handle date - Nightscout might return milliseconds since epoch
-        if let dateMillis = try? container.decode(Double.self, forKey: .date) {
+        self.mills = try? container.decode(Int.self, forKey: .mills)
+        
+        // Handle date - Priority: MILLS -> Date(Double) -> Date(String)
+        if let mills = self.mills {
+            self.date = Date(timeIntervalSince1970: Double(mills) / 1000.0)
+        } else if let dateMillis = try? container.decode(Double.self, forKey: .date) {
             // Convert milliseconds to seconds for Date
             self.date = Date(timeIntervalSince1970: dateMillis / 1000.0)
         } else if let dateString = try? container.decode(String.self, forKey: .date) {
@@ -207,7 +213,7 @@ class NightscoutService {
             return year >= 2024 && year <= 2027 
         }
         
-        let junkEntries = allEntries.filter { calendar.component(.year, from: $0.date) == 2081 }
+        let junkEntries = allEntries.filter { calendar.component(.year, from: $0.date) > 2030 }
         
         var processedEntries: [Entry] = []
         
@@ -217,21 +223,50 @@ class NightscoutService {
             processedEntries = realEntries
         } else if !junkEntries.isEmpty {
             // fallback to relative mapping ONLY if no real data exists
-            if let absoluteLatestJunkDate = junkEntries.map({ $0.date }).max() {
-                print("⏲️ No real data. Falling back to Relative Mapping for \(junkEntries.count) junk samples.")
+            if let latestEntry = junkEntries.sorted(by: { $0.date > $1.date }).first {
+                let latestJunkDate = latestEntry.date
+                print("⏲️ No real data. Analyzing \(junkEntries.count) junk samples from ~\(calendar.component(.year, from: latestJunkDate)).")
+                print("   Latest Junk Entry Date: \(latestJunkDate)")
+                print("   Target Now: \(now)")
+                
+                // --- FORECAST BUFFER LOGIC (RESTORED) ---
+                // The "Junk" stream (2081) is a FORECAST.
+                // The "Tip" (Latest) is ~2.5 hours in the future.
+                // The "Real" value (Peak) is ~130 minutes behind the tip.
+                // We align the Tip to "Now + 130m" so the Real Peak lands at "Now".
+                
+                let forecastBuffer: TimeInterval = 130 * 60 // 130 minutes
+                let targetDate = now.addingTimeInterval(forecastBuffer)
+                
+                let timeShift = targetDate.timeIntervalSince(latestJunkDate)
+                print("🔹 Using JUNK FORECAST PATH. Buffer: 130m")
+                print("   Aligning Latest Entry to: \(targetDate)")
+                print("   Calculated Time Shift: \(Int(timeShift)) seconds")
+                
+                // Log top 5 raw entries for debugging (WITH MILLS)
+                print("   --- Top 5 Raw Junk Entries (Before Shift) ---")
+                let topRaw = junkEntries.sorted(by: { $0.date > $1.date }).prefix(5)
+                for (index, entry) in topRaw.enumerated() {
+                    let millsStr = entry.mills != nil ? "\(entry.mills!)" : "nil"
+                    print("   [\(index)] \(entry.date) sgv:\(entry.sgv) mills:\(millsStr)")
+                }
+                print("   ---------------------------------------------")
+                
                 processedEntries = junkEntries.map { entry -> Entry in
                     var mutableEntry = entry
-                    let intervalFromPeak = entry.date.timeIntervalSince(absoluteLatestJunkDate)
-                    mutableEntry.date = now.addingTimeInterval(intervalFromPeak)
+                    // Apply constant shift
+                    mutableEntry.date = entry.date.addingTimeInterval(timeShift)
                     return mutableEntry
                 }
             }
         } else {
+            print("✅ Using Standard/Real Data Path (No Junk Logic applied)")
             processedEntries = allEntries
         }
         
         // Final cleaning: Ensure descending order and filter future drifts
-        let filterCutoff = now.addingTimeInterval(60)
+        // Allow buffered data (up to Now + 150m) to pass through
+        let filterCutoff = now.addingTimeInterval(150 * 60) 
         let finalEntries = processedEntries
             .filter { $0.date <= filterCutoff }
             .sorted(by: { $0.date > $1.date })

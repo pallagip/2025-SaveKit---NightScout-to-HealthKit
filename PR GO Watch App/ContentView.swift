@@ -110,10 +110,6 @@ struct ContentView: View {
             requestNotificationPermissions()
             healthKitManager.requestAuthorization()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenWatchAppFromNotification"))) { _ in
-            // This handles deep linking from notification taps
-            print("🔔 Watch app opened from OneSignal notification tap")
-        }
     }
     
     private func setupNotificationObserver() {
@@ -223,13 +219,13 @@ struct ContentView: View {
     }
     
     private func requestNotificationPermissions() {
-        // Request comprehensive notification permissions for OneSignal integration
+        // Request comprehensive notification permissions
         UNUserNotificationCenter.current().requestAuthorization(
             options: [.alert, .sound, .badge, .providesAppNotificationSettings]
         ) { granted, error in
             DispatchQueue.main.async {
                 if granted {
-                    print("✅ Watch notification permissions granted for OneSignal")
+                    print("✅ Watch notification permissions granted")
                 } else {
                     print("❌ Watch notification permissions denied: \(error?.localizedDescription ?? "unknown")")
                 }

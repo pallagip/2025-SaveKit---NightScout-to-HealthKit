@@ -3,7 +3,6 @@ import SwiftData
 import UIKit
 import BackgroundTasks
 import UserNotifications
-import OneSignalFramework
 
 // MARK: - BGTask Identifiers
 fileprivate let refreshTaskID = "com.ProDiabeticsTeam.NightScouttoHealthKitv1"
@@ -79,23 +78,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         
-        // Enable verbose logging for debugging (remove in production)
-        OneSignal.Debug.setLogLevel(.LL_VERBOSE)
-        
-        // Initialize with your OneSignal App ID
-        OneSignal.initialize("060af08a-0787-4eca-8d1c-cc8279f3e525", withLaunchOptions: launchOptions)
-        
-        // Set OneSignal notification listeners for comprehensive notification handling
-        setupOneSignalNotificationListeners()
-        
-        // Request notification permissions with fallback to settings
-        OneSignal.Notifications.requestPermission({ accepted in
-            print("📱 OneSignal notification permission: \(accepted ? "GRANTED" : "DENIED")")
-            if accepted {
-                print("🔔 OneSignal notifications enabled - no automatic GPU on notifications")
-            }
-        }, fallbackToSettings: true)
-        
         // Register background tasks for GPU WaveNet processing
         registerBackgroundTasks()
         
@@ -116,64 +98,6 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         
         print("✅ Background tasks registered successfully")
-    }
-    
-    // MARK: - OneSignal Notification Handlers Setup
-    private func setupOneSignalNotificationListeners() {
-        // Create a class conforming to OSNotificationLifecycleListener
-        class ForegroundLifecycleListener: NSObject, OSNotificationLifecycleListener {
-            weak var appDelegate: AppDelegate?
-            
-            init(appDelegate: AppDelegate) {
-                self.appDelegate = appDelegate
-                super.init()
-            }
-            
-            func onWillDisplay(event: OSNotificationWillDisplayEvent) {
-                let notification = event.notification
-                
-                print("🔔 === ONESIGNAL FOREGROUND NOTIFICATION ===")
-                print("📱 Notification ID: \(notification.notificationId ?? "unknown")")
-                print("📝 Title: \(notification.title ?? "No title")")
-                print("📄 Body: \(notification.body ?? "No body")")
-                print("🚫 No auto actions on foreground notification display")
-                
-                // Allow the notification to display normally
-                // Don't call event.preventDefault() so notification shows
-            }
-        }
-        
-        // Create a class conforming to OSNotificationClickListener
-        class ClickListener: NSObject, OSNotificationClickListener {
-            weak var appDelegate: AppDelegate?
-            
-            init(appDelegate: AppDelegate) {
-                self.appDelegate = appDelegate
-                super.init()
-            }
-            
-            func onClick(event: OSNotificationClickEvent) {
-                let notification = event.notification
-                
-                print("🔔 === ONESIGNAL NOTIFICATION CLICKED ===")
-                print("📱 Clicked Notification ID: \(notification.notificationId ?? "unknown")")
-                print("➡️ Opening app to ContentView (no auto GPU on tap)")
-                
-                // Do not trigger any prediction or show alerts on tap.
-                // Rely on iOS to bring the app to foreground, which shows ContentView by default.
-                // Optionally ensure main window is active.
-                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let window = windowScene.windows.first {
-                    window.makeKeyAndVisible()
-                }
-            }
-        }
-        
-        // Add the listeners
-        OneSignal.Notifications.addForegroundLifecycleListener(ForegroundLifecycleListener(appDelegate: self))
-        OneSignal.Notifications.addClickListener(ClickListener(appDelegate: self))
-        
-        print("✅ OneSignal notification handlers configured")
     }
     
     // MARK: - Background Task Handlers
@@ -215,49 +139,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         return true
     }
     
-    
-    
-    // MARK: - GPU Processing Alert
-    private func showGPUProcessingAlert(notification: OSNotification) {
-        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let window = windowScene.windows.first else {
-            print("❌ Could not find window to show alert")
-            return
-        }
-        
-        let alert = UIAlertController(
-            title: "🔥 GPU WaveNet Activated",
-            message: "OneSignal notification received!\n\nRunning all 5 WaveNet models on iPhone GPU for blood glucose prediction.\n\nNotification: \(notification.title ?? "Unknown")",
-            preferredStyle: .alert
-        )
-        
-        alert.addAction(UIAlertAction(title: "View Results", style: .default) { _ in
-            // Switch to the prediction tab to view results
-            if let tabBarController = window.rootViewController as? UITabBarController {
-                tabBarController.selectedIndex = 0 // Switch to prediction tab
-            }
-        })
-        
-        alert.addAction(UIAlertAction(title: "OK", style: .cancel))
-        
-        window.rootViewController?.present(alert, animated: true)
-    }
-    
     // MARK: - Device Token Handling
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         print("📱 Device registered for remote notifications")
         
-        // Send device token to OneSignal (handled automatically by OneSignal SDK)
-        
         let tokenString = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
         print("📬 Device Token: \(tokenString)")
-        
-        // Debug OneSignal user info
-        if let userId = OneSignal.User.onesignalId {
-            print("👤 OneSignal User ID: \(userId)")
-        }
-        
-        print("🔔 OneSignal Subscription Status: \(OneSignal.User.pushSubscription.optedIn)")
     }
     
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
@@ -274,46 +161,13 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             let syncResults = await WatchConnectivityManager.shared.performHealthKitToSwiftDataSync()
             print("✅ Automatic HealthKit sync completed - Insulin: \(syncResults.insulin), Carbs: \(syncResults.carbs)")
         }
-        
-        // MARK: - Device Token Handling
-        func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-            print("📱 Device registered for remote notifications")
-            
-            // Send device token to OneSignal (handled automatically by OneSignal SDK)
-            
-            let tokenString = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
-            print("📬 Device Token: \(tokenString)")
-            
-            // Debug OneSignal user info
-            if let userId = OneSignal.User.onesignalId {
-                print("👤 OneSignal User ID: \(userId)")
-            }
-            
-            print("🔔 OneSignal Subscription Status: \(OneSignal.User.pushSubscription.optedIn)")
-        }
-        
-        func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-            print("❌ Failed to register for remote notifications: \(error)")
-        }
-        
-        // MARK: - App Lifecycle - Automatic HealthKit Sync
-        func applicationDidBecomeActive(_ application: UIApplication) {
-            print("🔄 === APP BECAME ACTIVE - TRIGGERING HEALTHKIT SYNC ===")
-            
-            // Automatically sync HealthKit insulin and carb data to SwiftData
-            // This ensures SwiftData pairs are always fresh for background predictions
-            Task {
-                let syncResults = await WatchConnectivityManager.shared.performHealthKitToSwiftDataSync()
-                print("✅ Automatic HealthKit sync completed - Insulin: \(syncResults.insulin), Carbs: \(syncResults.carbs)")
-            }
-        }
-        
-        // Handle background remote notifications
-        func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable : Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-            print("🔔 === REMOTE NOTIFICATION RECEIVED (no auto actions) ===")
-            print("📦 UserInfo: \(userInfo)")
-            // Do not trigger GPU or forward to watch here.
-            completionHandler(.noData)
-        }
+    }
+    
+    // Handle background remote notifications
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable : Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        print("🔔 === REMOTE NOTIFICATION RECEIVED (no auto actions) ===")
+        print("📦 UserInfo: \(userInfo)")
+        completionHandler(.noData)
     }
 }
+

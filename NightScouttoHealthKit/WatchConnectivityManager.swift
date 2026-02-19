@@ -43,21 +43,6 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     ///   - prediction: Prediction value in mmol/L
     ///   - timestamp: When the prediction was made
     
-    /// Sends OneSignal notification info to the Apple Watch
-    /// - Parameters:
-    ///   - title: Notification title
-    ///   - body: Notification body
-    func sendOneSignalNotificationToWatch(title: String, body: String) {
-        let message = [
-            "type": "onesignal_notification",
-            "title": title,
-            "body": body,
-            "timestamp": Date().timeIntervalSince1970
-        ] as [String: Any]
-        
-        sendMessageToWatch(message: message, description: "OneSignal notification")
-    }
-    
     /// Generic method to send messages to watch with proper fallback
     private func sendMessageToWatch(message: [String: Any], description: String) {
         if WCSession.default.isReachable {

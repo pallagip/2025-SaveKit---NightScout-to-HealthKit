@@ -143,8 +143,6 @@ extension WatchConnectivityManager: WCSessionDelegate {
                     self.handleGPUPredictionResult(message: userInfo)
                 case "gpu_processing_status":
                     self.handleGPUProcessingStatus(message: userInfo)
-                case "onesignal_notification":
-                    self.handleOneSignalNotification(message: userInfo)
                 default:
                     print("⚠️ Unknown background message type from iPhone: \(type)")
                 }
@@ -219,17 +217,4 @@ extension WatchConnectivityManager: WCSessionDelegate {
             userInfo: ["isProcessing": isProcessing]
         )
     }
-    
-    private func handleOneSignalNotification(message: [String: Any]) {
-        print("🔔 Received OneSignal notification from iPhone")
-        
-        // Post notification to open watch app from deep link (no watch notifications)
-        NotificationCenter.default.post(
-            name: NSNotification.Name("OpenWatchAppFromNotification"),
-            object: nil,
-            userInfo: message
-        )
-    }
-    
-
 }
